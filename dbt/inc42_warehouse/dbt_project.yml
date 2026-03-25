@@ -1,0 +1,24 @@
+name: 'inc42_warehouse'
+version: '1.0.0'
+
+profile: 'inc42_warehouse'
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+
+models:
+  inc42_warehouse:
+    silver:
+      +schema: silver
+      +materialized: table
+    gold:
+      dimensions:
+        +schema: gold
+        +materialized: table
+      facts:
+        +schema: gold
+        +materialized: table
+      wide:
+        +schema: gold
+        +materialized: table

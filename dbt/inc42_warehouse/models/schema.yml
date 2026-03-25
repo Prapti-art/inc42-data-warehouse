@@ -1,0 +1,57 @@
+version: 2
+
+models:
+  - name: contacts
+    description: "Silver contacts: one row per unified person"
+    columns:
+      - name: unified_contact_id
+        tests:
+          - unique
+          - not_null
+      - name: email
+        tests:
+          - unique
+          - not_null
+
+  - name: companies
+    description: "Silver companies: Datalabs-powered company profiles"
+    columns:
+      - name: company_id
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_contact
+    description: "Gold dimension: master contact with company denormalized"
+    columns:
+      - name: contact_key
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_company
+    description: "Gold dimension: company intelligence from Datalabs"
+    columns:
+      - name: company_key
+        tests:
+          - unique
+          - not_null
+
+  - name: fact_orders
+    description: "Gold fact: one row per order"
+    columns:
+      - name: order_id
+        tests:
+          - not_null
+
+  - name: contact_360
+    description: "Gold wide: everything about a person in one row"
+    columns:
+      - name: contact_key
+        tests:
+          - unique
+          - not_null
+      - name: email
+        tests:
+          - unique
+          - not_null

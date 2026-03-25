@@ -1,0 +1,7 @@
+.secrets/
+venv/
+__pycache__/
+*.pyc
+.env
+airflow-db/
+*.log

@@ -1,0 +1,22 @@
+version: 2
+
+sources:
+  - name: bronze
+    database: bigquery-296406
+    schema: bronze
+    tables:
+      - name: gravity_forms
+      - name: tally_forms
+      - name: inc42_registered_users
+      - name: customerio_identify
+      - name: customerio_events
+      - name: woocommerce_orders
+      - name: hubspot_contacts
+      - name: dl_company_table
+
+  - name: silver
+    database: bigquery-296406
+    schema: silver
+    tables:
+      - name: unified_contacts
+      - name: contact_source_xref

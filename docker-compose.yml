@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  data-warehouse:
+    build: .
+    container_name: inc42-data-warehouse
+    ports:
+      - "8080:8080"  # Airflow UI
+    volumes:
+      # Mount secrets (not baked into image)
+      - ./.secrets:/secrets:ro
+      # Mount dbt project (when ready)
+      # - ./dbt:/opt/dbt:rw
+      # Mount scripts for hot-reload during development
+      - ./scripts:/opt/inc42-data-warehouse/scripts:ro
+      - ./spark:/opt/inc42-data-warehouse/spark:ro
+      - ./ingestion:/opt/inc42-data-warehouse/ingestion:ro
+      - ./airflow/dags:/opt/airflow/dags:ro
+      # Persist Airflow DB across restarts
+      - airflow-db:/opt/airflow
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/secrets/bq-service-account.json
+      - JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+    restart: unless-stopped
+
+volumes:
+  airflow-db:

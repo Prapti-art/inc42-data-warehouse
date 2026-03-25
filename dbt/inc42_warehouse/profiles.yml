@@ -1,0 +1,11 @@
+inc42_warehouse:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: service-account
+      project: bigquery-296406
+      keyfile: /Users/cepl/Documents/inc42-data-warehouse/.secrets/bq-service-account.json
+      dataset: silver
+      location: asia-south1
+      threads: 4
