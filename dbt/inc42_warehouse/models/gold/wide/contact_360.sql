@@ -53,6 +53,101 @@ marketing AS (
         COUNT(*) AS total_touchpoints
     FROM {{ ref('fact_marketing_touchpoints') }}
     GROUP BY contact_key
+),
+
+-- ═══════════════════════════════════════════════
+-- PROPERTY INTERACTIONS
+-- Collects ALL Inc42 properties each person touched
+-- ═══════════════════════════════════════════════
+properties AS (
+    -- Plus Membership
+    SELECT contact_key, 'Plus Membership' AS property_name, 'product' AS property_type, TRUE AS is_paid
+    FROM {{ ref('dim_contact') }}
+    WHERE plus_status IN ('active', 'active_cancelling', 'churned')
+
+    UNION ALL
+
+    -- Events (each event is a property)
+    SELECT DISTINCT contact_key, event_name AS property_name, 'event' AS property_type,
+        CASE WHEN is_paid = 1 THEN TRUE ELSE FALSE END AS is_paid
+    FROM {{ ref('fact_event_attendance') }}
+
+    UNION ALL
+
+    -- Newsletters (each newsletter is a property)
+    SELECT dc.contact_key, 'Daily Newsletter' AS property_name, 'newsletter' AS property_type, FALSE AS is_paid
+    FROM {{ ref('dim_contact') }} dc
+    JOIN {{ ref('contacts') }} sc ON dc.unified_contact_id = sc.unified_contact_id
+    WHERE sc.daily_newsletter = 'subscribed'
+
+    UNION ALL
+
+    SELECT dc.contact_key, 'Weekly Newsletter' AS property_name, 'newsletter' AS property_type, FALSE AS is_paid
+    FROM {{ ref('dim_contact') }} dc
+    JOIN {{ ref('contacts') }} sc ON dc.unified_contact_id = sc.unified_contact_id
+    WHERE sc.weekly_newsletter = 'subscribed'
+
+    UNION ALL
+
+    SELECT dc.contact_key, 'AI Shift Newsletter' AS property_name, 'newsletter' AS property_type, FALSE AS is_paid
+    FROM {{ ref('dim_contact') }} dc
+    JOIN {{ ref('contacts') }} sc ON dc.unified_contact_id = sc.unified_contact_id
+    WHERE sc.ai_shift_newsletter = 'subscribed'
+
+    UNION ALL
+
+    SELECT dc.contact_key, 'InDepth Newsletter' AS property_name, 'newsletter' AS property_type, FALSE AS is_paid
+    FROM {{ ref('dim_contact') }} dc
+    JOIN {{ ref('contacts') }} sc ON dc.unified_contact_id = sc.unified_contact_id
+    WHERE sc.indepth_newsletter = 'subscribed'
+
+    UNION ALL
+
+    SELECT dc.contact_key, 'TheOutline Newsletter' AS property_name, 'newsletter' AS property_type, FALSE AS is_paid
+    FROM {{ ref('dim_contact') }} dc
+    JOIN {{ ref('contacts') }} sc ON dc.unified_contact_id = sc.unified_contact_id
+    WHERE sc.theoutline_newsletter = 'subscribed'
+
+    UNION ALL
+
+    SELECT dc.contact_key, 'Markets Newsletter' AS property_name, 'newsletter' AS property_type, FALSE AS is_paid
+    FROM {{ ref('dim_contact') }} dc
+    JOIN {{ ref('contacts') }} sc ON dc.unified_contact_id = sc.unified_contact_id
+    WHERE sc.markets_newsletter = 'subscribed'
+
+    UNION ALL
+
+    -- Forms/Programs (Fast42, Founder Survey, etc.)
+    SELECT DISTINCT contact_key, form_name AS property_name, 'program' AS property_type, FALSE AS is_paid
+    FROM {{ ref('fact_form_submissions') }}
+
+    UNION ALL
+
+    -- WooCommerce Products (AI Workshop, etc. — excluding Plus which is already above)
+    SELECT DISTINCT fo.contact_key,
+        JSON_VALUE(wo.line_items_json, '$[0].name') AS property_name,
+        'product' AS property_type, TRUE AS is_paid
+    FROM {{ ref('fact_orders') }} fo
+    JOIN {{ source('bronze', 'woocommerce_orders') }} wo ON fo.order_id = wo.order_id
+    WHERE JSON_VALUE(wo.line_items_json, '$[0].name') NOT LIKE '%Plus%'
+),
+
+property_deduped AS (
+    SELECT DISTINCT contact_key, property_name, property_type, is_paid
+    FROM properties
+),
+
+property_agg AS (
+    SELECT
+        contact_key,
+        COUNT(DISTINCT property_name) AS total_properties_interacted,
+        STRING_AGG(property_name, ', ') AS properties_interacted_names,
+        COUNT(DISTINCT CASE WHEN is_paid THEN property_name END) AS total_paid_properties,
+        STRING_AGG(CASE WHEN is_paid THEN property_name END, ', ') AS paid_properties_names,
+        COUNT(DISTINCT property_type) AS property_types_touched,
+        STRING_AGG(DISTINCT property_type, ', ') AS property_types_names
+    FROM property_deduped
+    GROUP BY contact_key
 )
 
 SELECT
@@ -140,6 +235,17 @@ SELECT
         + CASE WHEN c.plus_status = 'active' THEN 20 ELSE 0 END
     , 1) AS engagement_score,
 
+    -- Inc42 Property Interactions
+    COALESCE(p.total_properties_interacted, 0) AS total_properties_interacted,
+    p.properties_interacted_names,
+    -- e.g. "AI Summit 2025, AI Workshop Ticket, Daily Newsletter, Fast42, Markets Newsletter, Plus Membership, Weekly Newsletter"
+    COALESCE(p.total_paid_properties, 0) AS total_paid_properties,
+    p.paid_properties_names,
+    -- e.g. "AI Summit 2025, AI Workshop Ticket, Plus Membership"
+    COALESCE(p.property_types_touched, 0) AS property_types_touched,
+    p.property_types_names,
+    -- e.g. "event, newsletter, product, program"
+
     -- Source coverage
     c.source_count,
 
@@ -150,3 +256,4 @@ LEFT JOIN orders o ON c.contact_key = o.contact_key
 LEFT JOIN events ev ON c.contact_key = ev.contact_key
 LEFT JOIN forms f ON c.contact_key = f.contact_key
 LEFT JOIN marketing m ON c.contact_key = m.contact_key
+LEFT JOIN property_agg p ON c.contact_key = p.contact_key
