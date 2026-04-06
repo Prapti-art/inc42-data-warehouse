@@ -5,3 +5,7 @@ __pycache__/
 .env
 airflow-db/
 *.log
+.DS_Store
+dbt/inc42_warehouse/target/
+dbt/inc42_warehouse/logs/
+dbt/inc42_warehouse/dbt_packages/

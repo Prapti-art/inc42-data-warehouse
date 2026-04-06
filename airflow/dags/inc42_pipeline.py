@@ -52,8 +52,24 @@ with DAG(
     #     bash_command=f"python {PROJECT_DIR}/ingestion/scripts/woocommerce_ingest.py",
     # )
     # ingest_hubspot = BashOperator(...)
+    # Customer.io: load parquet files from GCS → BigQuery Bronze
+    ingest_customerio = BashOperator(
+        task_id="load_customerio_gcs_to_bq",
+        bash_command=f"python {PROJECT_DIR}/ingestion/scripts/customerio_gcs_to_bq.py",
+        doc="Load Customer.io parquet files from GCS into 9 Bronze tables (2.4M+ rows)",
+    )
+
+    # Tally: fetch all form submissions via API → BigQuery Bronze
+    ingest_tally = BashOperator(
+        task_id="load_tally_forms",
+        bash_command=f"python {PROJECT_DIR}/ingestion/scripts/tally_ingest.py",
+        doc="Fetch all Tally form submissions via REST API → bronze.tally_forms",
+    )
+
+    # Future:
     # ingest_gravity = BashOperator(...)
-    # etc.
+    # ingest_woocommerce = BashOperator(...)
+    # ingest_hubspot = BashOperator(...)
 
     # ════════════════════════════════════════════
     #  PHASE 2: PYSPARK (after ingestion)
@@ -106,11 +122,12 @@ with DAG(
     #  DEPENDENCIES
     # ════════════════════════════════════════════
 
-    # Phase 1 → Phase 2 → Phase 3 → Phase 4
-    ingest_bronze >> spark_identity
+    # Phase 1: All ingestion runs in parallel
+    # Phase 2: PySpark runs after ALL ingestion completes
+    [ingest_bronze, ingest_customerio, ingest_tally] >> spark_identity
 
-    # When you add more tasks:
-    # [ingest_woo, ingest_hubspot, ...] >> spark_identity
+    # Future:
+    # [ingest_bronze, ingest_customerio, ingest_tally, ingest_gravity, ingest_woo, ingest_hubspot] >> spark_identity
     # [spark_identity, spark_company, spark_revenue] >> dbt_silver
     # dbt_silver >> dbt_gold >> dbt_test
     # dbt_test >> [retl_customerio, retl_slack, retl_sheets]

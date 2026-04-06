@@ -1,0 +1,67 @@
+taxonomy_name,taxonomy_field,value,category,sort_order
+Funding Type,funding_table.funding_type,Pre-Seed,Equity,1
+Funding Type,funding_table.funding_type,Seed,Equity,2
+Funding Type,funding_table.funding_type,Angel Round,Equity,3
+Funding Type,funding_table.funding_type,Angel,Equity,4
+Funding Type,funding_table.funding_type,Pre-Series A,Equity,5
+Funding Type,funding_table.funding_type,Series A,Equity,6
+Funding Type,funding_table.funding_type,Series A2,Equity,7
+Funding Type,funding_table.funding_type,Pre-Series B,Equity,8
+Funding Type,funding_table.funding_type,Series B,Equity,9
+Funding Type,funding_table.funding_type,Series B1,Equity,10
+Funding Type,funding_table.funding_type,Series B2,Equity,11
+Funding Type,funding_table.funding_type,Series B - Mix of Debt And Equity,Equity,12
+Funding Type,funding_table.funding_type,Pre-Series C,Equity,13
+Funding Type,funding_table.funding_type,Series C,Equity,14
+Funding Type,funding_table.funding_type,Pre-Series D,Equity,15
+Funding Type,funding_table.funding_type,Series D,Equity,16
+Funding Type,funding_table.funding_type,Series D2,Equity,17
+Funding Type,funding_table.funding_type,Pre-Series E,Equity,18
+Funding Type,funding_table.funding_type,Series E,Equity,19
+Funding Type,funding_table.funding_type,Series F,Equity,20
+Funding Type,funding_table.funding_type,Series G,Equity,21
+Funding Type,funding_table.funding_type,Series H,Equity,22
+Funding Type,funding_table.funding_type,Series I,Equity,23
+Funding Type,funding_table.funding_type,Series J,Equity,24
+Funding Type,funding_table.funding_type,Series K,Equity,25
+Funding Type,funding_table.funding_type,Series M,Equity,26
+Funding Type,funding_table.funding_type,Venture Round,Equity,27
+Funding Type,funding_table.funding_type,Corporate Round,Equity,28
+Funding Type,funding_table.funding_type,Private Equity,Equity,29
+Funding Type,funding_table.funding_type,Strategic Equity Partnership,Equity,30
+Funding Type,funding_table.funding_type,Strategic,Equity,31
+Funding Type,funding_table.funding_type,CCPS,Equity,32
+Funding Type,funding_table.funding_type,CCPS Acquisition,Equity,33
+Funding Type,funding_table.funding_type,Share Purchase Agreement,Equity,34
+Funding Type,funding_table.funding_type,Equity Crowdfunding,Equity,35
+Funding Type,funding_table.funding_type,Product Crowdfunding,Equity,36
+Funding Type,funding_table.funding_type,Institutional Funding,Equity,37
+Funding Type,funding_table.funding_type,QIP,Equity,38
+Funding Type,funding_table.funding_type,Rights issue,Equity,39
+Funding Type,funding_table.funding_type,Debt Financing,Debt,40
+Funding Type,funding_table.funding_type,Debt Funding,Debt,41
+Funding Type,funding_table.funding_type,Debt,Debt,42
+Funding Type,funding_table.funding_type,Venture Debt,Debt,43
+Funding Type,funding_table.funding_type,Convertible Note,Debt,44
+Funding Type,funding_table.funding_type,Mix of Equity & Debt,Mixed,45
+Funding Type,funding_table.funding_type,Mix of Debt & Equity,Mixed,46
+Funding Type,funding_table.funding_type,Debt and Equity Funding,Mixed,47
+Funding Type,funding_table.funding_type,Mix of Primary and Secondary,Mixed,48
+Funding Type,funding_table.funding_type,Bridge,Bridge,49
+Funding Type,funding_table.funding_type,Bridge Round,Bridge,50
+Funding Type,funding_table.funding_type,Post-IPO Equity,Post-IPO,51
+Funding Type,funding_table.funding_type,Post-IPO,Post-IPO,52
+Funding Type,funding_table.funding_type,Post-IPO Debt,Post-IPO,53
+Funding Type,funding_table.funding_type,Post-IPO Secondary,Post-IPO,54
+Funding Type,funding_table.funding_type,Pre-IPO,Pre-IPO,55
+Funding Type,funding_table.funding_type,Initial Coin Offering,Other,56
+Funding Type,funding_table.funding_type,Secondary Market,Other,57
+Funding Type,funding_table.funding_type,Grant,Other,58
+Funding Type,funding_table.funding_type,Non Equity Assistance,Other,59
+Funding Type,funding_table.funding_type,Undisclosed,Other,60
+Funding Type,funding_table.funding_type,Pre-Series Unknown,Other,61
+Funding Stage,funding_table.funding_stage,Early Stage,Stage,1
+Funding Stage,funding_table.funding_stage,Growth Stage,Stage,2
+Funding Stage,funding_table.funding_stage,Late Stage,Stage,3
+Funding Stage,funding_table.funding_stage,Bridge Stage,Stage,4
+Funding Stage,funding_table.funding_stage,Undisclosed,Stage,5
