@@ -23,6 +23,9 @@ default_args = {
     "env": {
         "GOOGLE_APPLICATION_CREDENTIALS": CREDENTIALS,
         "JAVA_HOME": "/usr/lib/jvm/java-17-openjdk-amd64",
+        "MYSQL_HOST": "inc42-prod.mysql.database.azure.com",
+        "MYSQL_USER": "{{ var.value.MYSQL_USER }}",
+        "MYSQL_PASSWORD": "{{ var.value.MYSQL_PASSWORD }}",
     },
 }
 
@@ -66,9 +69,28 @@ with DAG(
         doc="Fetch all Tally form submissions via REST API → bronze.tally_forms",
     )
 
+    # Inc42 DB: users + usermeta → BigQuery Bronze
+    ingest_inc42_db = BashOperator(
+        task_id="load_inc42_db",
+        bash_command=f"python {PROJECT_DIR}/ingestion/scripts/inc42_db_ingest.py",
+        doc="Load 42_users and 42_usermeta from MySQL → bronze.inc42_users, bronze.inc42_usermeta",
+    )
+
+    # Gravity Forms: entries + entry_meta → BigQuery Bronze
+    ingest_gravity = BashOperator(
+        task_id="load_gravity_forms",
+        bash_command=f"python {PROJECT_DIR}/ingestion/scripts/gravity_forms_ingest.py",
+        doc="Load 42_gf_entry and 42_gf_entry_meta from MySQL → bronze.gravity_forms_*",
+    )
+
+    # WooCommerce: orders, order_meta, products, order_items → BigQuery Bronze
+    ingest_woocommerce = BashOperator(
+        task_id="load_woocommerce",
+        bash_command=f"python {PROJECT_DIR}/ingestion/scripts/woocommerce_ingest.py",
+        doc="Load WooCommerce tables from MySQL → bronze.woocommerce_*",
+    )
+
     # Future:
-    # ingest_gravity = BashOperator(...)
-    # ingest_woocommerce = BashOperator(...)
     # ingest_hubspot = BashOperator(...)
 
     # ════════════════════════════════════════════
@@ -124,7 +146,7 @@ with DAG(
 
     # Phase 1: All ingestion runs in parallel
     # Phase 2: PySpark runs after ALL ingestion completes
-    [ingest_bronze, ingest_customerio, ingest_tally] >> spark_identity
+    [ingest_bronze, ingest_customerio, ingest_tally, ingest_inc42_db, ingest_gravity, ingest_woocommerce] >> spark_identity
 
     # Future:
     # [ingest_bronze, ingest_customerio, ingest_tally, ingest_gravity, ingest_woo, ingest_hubspot] >> spark_identity

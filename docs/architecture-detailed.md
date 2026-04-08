@@ -1000,3 +1000,96 @@ flowchart LR
 | **Phase 2** | Week 3-4 | Remaining 5 ingestion pipelines, Customer.io native connector, PySpark identity resolution |
 | **Phase 3** | Week 5-8 | All Silver dbt models (30+ tables), Gold dimensions + facts, 360 views, data quality tests |
 | **Phase 4** | Week 9-12 | Reverse ETL to Customer.io + Slack, Looker Studio dashboards, documentation, team onboarding |
+
+---
+
+## Current Status — Live Pipeline Results (April 2026)
+
+### Bronze Layer: 14.8M Rows Ingested
+
+All 5 active source systems are now connected and loading into BigQuery Bronze daily.
+
+| Source | Ingestion Method | Bronze Tables | Rows |
+|--------|-----------------|---------------|------|
+| **Inc42 DB** | MySQL direct (Azure) | `inc42_users`, `inc42_usermeta` | 6,829,243 |
+| **Gravity Forms** | MySQL direct (Azure) | `gravity_forms_entries`, `gravity_forms_entry_meta` | 4,554,259 |
+| **Customer.io** | Native BQ connector → GCS → Parquet load | 9 tables (`cio_people`, `cio_events`, `cio_deliveries`, etc.) | 2,444,951 |
+| **WooCommerce** | MySQL direct (Azure) | `woocommerce_orders`, `woocommerce_order_meta`, `woocommerce_products`, `woocommerce_order_items` | 998,169 |
+| **Tally** | REST API | `tally_forms` | 3,224 |
+| | | **24 Bronze tables total** | **14,829,878** |
+
+**Ingestion strategy:**
+- **MySQL sources** (Inc42 DB, Gravity Forms, WooCommerce): All live in the same Azure MySQL server (`inc42-prod.mysql.database.azure.com`, database `inc42prod`). Scripts use `mysql-connector-python` + `pandas` to read, then `google-cloud-bigquery` to write. Full refresh (`WRITE_TRUNCATE`) each run.
+- **Customer.io**: Native BigQuery connector drops parquet files into GCS (`gs://inc42-data-warehouse-raw/customerio/`) every 10 minutes. Loader script reads 9 file prefixes and loads into Bronze. Full refresh.
+- **Tally**: REST API with pagination (`GET /forms` → `GET /forms/{id}/submissions`). Incremental append (`WRITE_APPEND`) with dedup by `response_id`.
+
+### Silver Layer: Identity Resolution — 1M Records → 330K People
+
+PySpark identity resolution ran successfully on real data:
+
+| Metric | Value |
+|--------|-------|
+| **Total input records** | 1,028,654 across 5 sources |
+| **Unique people identified** | 330,481 |
+| **Deduplication rate** | 68% were duplicates across systems |
+| **Email-matched** | 329,272 people |
+| **Phone-matched** | 7 additional records linked |
+| **Unresolvable** | 1,194 records (no email or phone) |
+
+**Source extraction methodology:**
+
+| Source | Email Field | Phone Field | Challenge |
+|--------|-------------|-------------|-----------|
+| **Inc42 DB** | `user_email` in `42_users` | `billing_phone` in `42_usermeta` (EAV pivot) | 6.6M usermeta rows pivoted via `CASE WHEN meta_key=X` |
+| **Customer.io** | `email_addr` in `cio_people` | `Phone Number` in `cio_attributes` (EAV pivot) | Attribute names vary (`First_Name` vs `First Name`) |
+| **Tally** | `email` column (flat) | `phone` / `whatsapp_number` | Already flat — no pivoting needed |
+| **WooCommerce** | `_billing_email` in `order_meta` (EAV pivot) | `_billing_phone` in `order_meta` | One person = many orders; all deduplicate to same contact |
+| **Gravity Forms** | **Auto-detected per form** (field varies) | Phone field detected by format | 30+ forms, each uses different field IDs for email. Script detects which field has >50% `@` symbols |
+
+**Cross-source overlap:**
+
+| Found in X sources | People |
+|--------------------|--------|
+| 1 source only | 240,046 |
+| 2 sources | 55,724 |
+| 3 sources | 16,106 |
+| 4 sources | 6,793 |
+| 5+ sources | 11,812 |
+
+**Output tables:**
+- `silver.unified_contacts` — 330,481 rows (one per person: primary email, phone, name, company, all known emails/phones, source count)
+- `silver.contact_source_xref` — 1,028,654 rows (maps every source record to its unified person)
+
+### Airflow DAG: Full Orchestration
+
+```
+Phase 1 (parallel):           Phase 2:
+┌─────────────────────┐
+│ load_bronze_tables   │───┐
+│ load_customerio      │───┤
+│ load_tally_forms     │───┼──→ spark_identity_resolution ──→ [dbt Silver → Gold → Reverse ETL]
+│ load_inc42_db        │───┤                                   (coming next)
+│ load_gravity_forms   │───┤
+│ load_woocommerce     │───┘
+└─────────────────────┘
+```
+
+Schedule: Daily at midnight IST (`30 18 * * *` UTC). All ingestion runs in parallel, PySpark runs after all complete.
+
+### Infrastructure
+
+| Component | Where | Cost |
+|-----------|-------|------|
+| BigQuery | GCP (`bigquery-296406`) | Free tier (first 10GB/month) |
+| GCS | `gs://inc42-data-warehouse-raw/` | ~$1/month |
+| GCP VM | `e2-medium` (2 vCPU, 4GB) Singapore | ~$15/month |
+| Docker | Packages Python 3.11 + Java 21 + Airflow + PySpark + dbt | — |
+| Airflow UI | `http://34.126.220.115:8080` | — |
+
+### What's Next
+
+- [ ] dbt Silver models (dim_contact, contacts, fact tables) using real unified data
+- [ ] dbt Gold models (contact_360, company_360) on real data
+- [ ] Reverse ETL to Customer.io
+- [ ] HubSpot ingestion (deferred)
+- [ ] Datalabs PostgreSQL ingestion (company data)
