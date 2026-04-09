@@ -18,6 +18,18 @@ SELECT
     c.country,
     c.user_type,
 
+    -- Newsletter subscriptions
+    c.daily_newsletter,
+    c.weekly_newsletter,
+    c.indepth_newsletter,
+    c.moneyball_newsletter,
+    c.theoutline_newsletter,
+    c.markets_newsletter,
+    c.is_globally_unsubscribed,
+    c.is_suppressed,
+    c.whatsapp_optin,
+    c.email_reachability,
+
     -- Source coverage
     c.source_count,
     c.found_in_systems,

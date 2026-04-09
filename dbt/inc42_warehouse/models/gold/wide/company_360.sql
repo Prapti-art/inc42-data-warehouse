@@ -1,8 +1,49 @@
 -- Gold company_360: ONE ROW = EVERYTHING about a company
--- Datalabs company data + Inc42 engagement metrics
+-- Datalabs company data + Inc42 engagement + sector thesis + Inc42 tags + investors
 
 WITH company AS (
     SELECT * FROM {{ ref('dim_company') }}
+),
+
+-- Inc42 sector thesis (proper sector classification)
+sector_thesis AS (
+    SELECT
+        st.company_uuid,
+        STRING_AGG(DISTINCT th.sector, ', ') AS inc42_sectors,
+        STRING_AGG(DISTINCT th.sub_sector, ', ') AS inc42_sub_sectors
+    FROM {{ source('bronze', 'dl_sector_tagging') }} st
+    JOIN {{ source('bronze', 'dl_inc42_sector_thesis') }} th ON st.tag_id = th.tag_id
+    GROUP BY st.company_uuid
+),
+
+-- Inc42 company tags (Unicorn, Soonicorn, FAST42, 30 Startups To Watch, etc.)
+inc42_tags AS (
+    SELECT
+        company_uuid,
+        STRING_AGG(DISTINCT CONCAT(tag_name, ' (', category, ')'), ', ') AS inc42_tags,
+        MAX(CASE WHEN tag_name = 'Unicorn' THEN TRUE ELSE FALSE END) AS is_unicorn,
+        MAX(CASE WHEN tag_name = 'Soonicorn' THEN TRUE ELSE FALSE END) AS is_soonicorn,
+        MAX(CASE WHEN tag_name = 'Minicorn' THEN TRUE ELSE FALSE END) AS is_minicorn,
+        MAX(CASE WHEN tag_name = 'FAST42' THEN TRUE ELSE FALSE END) AS is_fast42_winner,
+        MAX(CASE WHEN tag_name = '30 Startups To Watch' THEN TRUE ELSE FALSE END) AS is_30_startups_to_watch,
+        MAX(CASE WHEN tag_name = 'Startup Watchlist' THEN TRUE ELSE FALSE END) AS is_startup_watchlist,
+        MAX(CASE WHEN tag_name = 'Inc42 UpNext' THEN TRUE ELSE FALSE END) AS is_inc42_upnext,
+        MAX(CASE WHEN category = 'Tracker' THEN TRUE ELSE FALSE END) AS is_tracked
+    FROM {{ source('bronze', 'dl_inc42_company_tag') }}
+    WHERE status = 'active'
+    GROUP BY company_uuid
+),
+
+-- Company investors
+investors AS (
+    SELECT
+        f.company_uuid,
+        STRING_AGG(DISTINCT inv.name, ', ') AS investors,
+        COUNT(DISTINCT inv.investor_uuid) AS investor_count
+    FROM {{ source('bronze', 'dl_funding_table') }} f
+    JOIN {{ source('bronze', 'dl_investment_table') }} i ON CAST(f.funding_uuid AS STRING) = CAST(i.funding_uuid AS STRING)
+    JOIN {{ source('bronze', 'dl_investor_table') }} inv ON i.investor_uuid = inv.investor_uuid
+    GROUP BY f.company_uuid
 ),
 
 -- How many Inc42 contacts work at each company
@@ -34,9 +75,15 @@ SELECT
     co.company_name,
     co.website,
     co.domain,
-    co.sector,
-    co.sub_sector,
+
+    -- Sector (from Inc42 sector thesis — proper classification)
+    sth.inc42_sectors AS sector,
+    sth.inc42_sub_sectors AS sub_sectors,
+    co.sector AS dl_sector_raw,
+    co.sub_sector AS dl_sub_sector_raw,
     co.business_model,
+
+    -- Location
     co.city,
     co.state,
     co.country,
@@ -51,6 +98,10 @@ SELECT
     co.last_funding_type,
     co.total_funding_rounds,
 
+    -- Investors
+    inv.investors,
+    COALESCE(inv.investor_count, 0) AS investor_count,
+
     -- Financials
     co.revenue_from_operations,
     co.total_revenue,
@@ -61,6 +112,17 @@ SELECT
     co.employee_count,
     co.monthly_visits,
 
+    -- Inc42 tags
+    it.inc42_tags,
+    COALESCE(it.is_unicorn, FALSE) AS is_unicorn,
+    COALESCE(it.is_soonicorn, FALSE) AS is_soonicorn,
+    COALESCE(it.is_minicorn, FALSE) AS is_minicorn,
+    COALESCE(it.is_fast42_winner, FALSE) AS is_fast42_winner,
+    COALESCE(it.is_30_startups_to_watch, FALSE) AS is_30_startups_to_watch,
+    COALESCE(it.is_startup_watchlist, FALSE) AS is_startup_watchlist,
+    COALESCE(it.is_inc42_upnext, FALSE) AS is_inc42_upnext,
+    COALESCE(it.is_tracked, FALSE) AS is_tracked,
+
     -- Inc42 engagement
     COALESCE(ic.contacts_in_warehouse, 0) AS contacts_in_warehouse,
     COALESCE(ic.unique_contacts, 0) AS unique_contacts,
@@ -70,5 +132,8 @@ SELECT
     CURRENT_TIMESTAMP() AS updated_at
 
 FROM company co
+LEFT JOIN sector_thesis sth ON co.company_id = sth.company_uuid
+LEFT JOIN inc42_tags it ON co.company_id = it.company_uuid
+LEFT JOIN investors inv ON co.company_id = inv.company_uuid
 LEFT JOIN inc42_contacts ic ON LOWER(TRIM(co.company_name)) = ic.company_name_lower
 LEFT JOIN company_orders cor ON LOWER(TRIM(co.company_name)) = cor.company_name_lower

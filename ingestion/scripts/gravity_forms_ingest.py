@@ -34,6 +34,7 @@ bq = bigquery.Client(project=BQ_PROJECT)
 TABLES = {
     "42_gf_entry": "bronze.gravity_forms_entries",
     "42_gf_entry_meta": "bronze.gravity_forms_entry_meta",
+    "42_gf_form": "bronze.gravity_forms_forms",
 }
 
 

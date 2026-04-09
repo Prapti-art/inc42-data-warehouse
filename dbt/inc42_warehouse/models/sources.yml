@@ -12,6 +12,7 @@ sources:
       # Gravity Forms (MySQL)
       - name: gravity_forms_entries
       - name: gravity_forms_entry_meta
+      - name: gravity_forms_forms
 
       # WooCommerce (MySQL)
       - name: woocommerce_orders
@@ -46,6 +47,9 @@ sources:
       - name: dl_sector_tagging
       - name: dl_website_analytics_table
       - name: dl_acquisition_table
+      - name: dl_inc42_company_tag
+      - name: dl_inc42_sector_thesis
+      - name: dl_people_education_table
 
   - name: silver
     database: bigquery-296406

@@ -38,13 +38,18 @@ funding AS (
     GROUP BY company_uuid
 ),
 
--- Latest P&L per company
+-- Latest P&L per company (prefer Consolidated, fallback to Standalone)
 financials AS (
     SELECT company_uuid, revenue_from_operations, total_revenue,
-           profit_loss_for_the_period, total_expenses, as_of_date
+           profit_loss_for_the_period, total_expenses, as_of_date, financial_type
     FROM (
         SELECT *,
-            ROW_NUMBER() OVER (PARTITION BY company_uuid ORDER BY as_of_date DESC) AS rn
+            ROW_NUMBER() OVER (
+                PARTITION BY company_uuid
+                ORDER BY
+                    CASE WHEN financial_type = 'Consolidated' THEN 0 ELSE 1 END,
+                    as_of_date DESC
+            ) AS rn
         FROM {{ source('bronze', 'dl_profit_loss_table') }}
     )
     WHERE rn = 1

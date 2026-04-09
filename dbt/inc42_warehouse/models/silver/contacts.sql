@@ -33,6 +33,7 @@ inc42 AS (
 customerio AS (
     SELECT
         LOWER(TRIM(p.email_addr)) AS email,
+        MAX(COALESCE(p.suppressed, FALSE)) AS is_suppressed,
         MAX(CASE WHEN a.attribute_name = 'First_Name' THEN a.attribute_value END) AS first_name,
         MAX(CASE WHEN a.attribute_name = 'Last_Name' THEN a.attribute_value END) AS last_name,
         MAX(CASE WHEN a.attribute_name = 'Phone Number' THEN a.attribute_value END) AS phone,
@@ -40,7 +41,22 @@ customerio AS (
         MAX(CASE WHEN a.attribute_name = 'cio_city' THEN a.attribute_value END) AS city,
         MAX(CASE WHEN a.attribute_name = 'LinkedIn_Profile_URL' THEN a.attribute_value END) AS linkedin_url,
         MAX(CASE WHEN a.attribute_name = 'Work_Email' THEN a.attribute_value END) AS work_email,
-        MAX(CASE WHEN a.attribute_name = 'Full_Name' THEN a.attribute_value END) AS full_name
+        MAX(CASE WHEN a.attribute_name = 'Full_Name' THEN a.attribute_value END) AS full_name,
+        MAX(CASE WHEN a.attribute_name = 'Whatsapp_Optin' THEN a.attribute_value END) AS whatsapp_optin,
+        -- Newsletter subscriptions from cio_subscription_preferences
+        MAX(CASE WHEN a.attribute_name = 'cio_subscription_preferences'
+            THEN JSON_VALUE(a.attribute_value, '$.topics.topic_1') END) AS daily_newsletter,
+        MAX(CASE WHEN a.attribute_name = 'cio_subscription_preferences'
+            THEN JSON_VALUE(a.attribute_value, '$.topics.topic_2') END) AS weekly_newsletter,
+        MAX(CASE WHEN a.attribute_name = 'cio_subscription_preferences'
+            THEN JSON_VALUE(a.attribute_value, '$.topics.topic_3') END) AS indepth_newsletter,
+        MAX(CASE WHEN a.attribute_name = 'cio_subscription_preferences'
+            THEN JSON_VALUE(a.attribute_value, '$.topics.topic_4') END) AS moneyball_newsletter,
+        MAX(CASE WHEN a.attribute_name = 'cio_subscription_preferences'
+            THEN JSON_VALUE(a.attribute_value, '$.topics.topic_5') END) AS theoutline_newsletter,
+        MAX(CASE WHEN a.attribute_name = 'cio_subscription_preferences'
+            THEN JSON_VALUE(a.attribute_value, '$.topics.topic_6') END) AS markets_newsletter,
+        MAX(CASE WHEN a.attribute_name = 'unsubscribed' THEN a.attribute_value END) AS unsubscribed_all
     FROM {{ source('bronze', 'cio_people') }} p
     LEFT JOIN {{ source('bronze', 'cio_attributes') }} a ON p.internal_customer_id = a.internal_customer_id
     WHERE p.email_addr IS NOT NULL AND p.email_addr != ''
@@ -72,21 +88,30 @@ woo AS (
     WHERE rn = 1 AND email IS NOT NULL
 ),
 
--- ── Tally: already flat ──
+-- ── Tally: dedup to one row per email (latest submission wins) ──
 tally AS (
-    SELECT
-        LOWER(TRIM(COALESCE(email, work_email))) AS email,
-        first_name,
-        last_name,
-        COALESCE(phone, whatsapp_number) AS phone,
-        company_name,
-        designation,
-        linkedin_url,
-        city,
-        sector,
-        seniority
-    FROM {{ source('bronze', 'tally_forms') }}
-    WHERE COALESCE(email, work_email) IS NOT NULL
+    SELECT email, first_name, last_name, phone, company_name,
+           designation, linkedin_url, city, sector, seniority
+    FROM (
+        SELECT
+            LOWER(TRIM(COALESCE(email, work_email))) AS email,
+            first_name,
+            last_name,
+            COALESCE(phone, whatsapp_number) AS phone,
+            company_name,
+            designation,
+            linkedin_url,
+            city,
+            sector,
+            seniority,
+            ROW_NUMBER() OVER (
+                PARTITION BY LOWER(TRIM(COALESCE(email, work_email)))
+                ORDER BY submitted_at DESC
+            ) AS rn
+        FROM {{ source('bronze', 'tally_forms') }}
+        WHERE COALESCE(email, work_email) IS NOT NULL
+    )
+    WHERE rn = 1
 )
 
 SELECT
@@ -139,6 +164,25 @@ SELECT
     u.found_in_systems,
     u.all_emails,
     u.all_phones,
+
+    -- Newsletter subscriptions (from Customer.io)
+    CASE WHEN c.daily_newsletter = 'true' THEN 'subscribed' ELSE 'unsubscribed' END AS daily_newsletter,
+    CASE WHEN c.weekly_newsletter = 'true' THEN 'subscribed' ELSE 'unsubscribed' END AS weekly_newsletter,
+    CASE WHEN c.indepth_newsletter = 'true' THEN 'subscribed' ELSE 'unsubscribed' END AS indepth_newsletter,
+    CASE WHEN c.moneyball_newsletter = 'true' THEN 'subscribed' ELSE 'unsubscribed' END AS moneyball_newsletter,
+    CASE WHEN c.theoutline_newsletter = 'true' THEN 'subscribed' ELSE 'unsubscribed' END AS theoutline_newsletter,
+    CASE WHEN c.markets_newsletter = 'true' THEN 'subscribed' ELSE 'unsubscribed' END AS markets_newsletter,
+    CASE WHEN c.unsubscribed_all = 'true' THEN TRUE ELSE FALSE END AS is_globally_unsubscribed,
+    COALESCE(c.is_suppressed, FALSE) AS is_suppressed,
+    COALESCE(c.whatsapp_optin, 'No') AS whatsapp_optin,
+
+    -- Email reachability status (based on Customer.io)
+    CASE
+        WHEN c.unsubscribed_all = 'true' THEN 'unsubscribed'
+        WHEN c.is_suppressed = TRUE THEN 'suppressed'
+        WHEN c.email IS NOT NULL THEN 'reachable'
+        ELSE 'not_in_customerio'
+    END AS email_reachability,
 
     -- Registration date
     i.user_registered AS inc42_registered_at,
