@@ -9,8 +9,8 @@ services:
     volumes:
       # Mount secrets (not baked into image)
       - ./.secrets:/secrets:ro
-      # Mount dbt project (when ready)
-      # - ./dbt:/opt/dbt:rw
+      # Mount dbt project
+      - ./dbt:/opt/inc42-data-warehouse/dbt:ro
       # Mount scripts for hot-reload during development
       - ./scripts:/opt/inc42-data-warehouse/scripts:ro
       - ./spark:/opt/inc42-data-warehouse/spark:ro
@@ -20,7 +20,7 @@ services:
       - airflow-db:/opt/airflow
     environment:
       - GOOGLE_APPLICATION_CREDENTIALS=/secrets/bq-service-account.json
-      - JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+      - JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
     restart: unless-stopped
 
 volumes:

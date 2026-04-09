@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-arm64
+ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
 # ── Install Python packages ──
@@ -32,6 +32,7 @@ COPY scripts/ scripts/
 COPY spark/ spark/
 COPY airflow/dags/ /opt/airflow/dags/
 COPY ingestion/ ingestion/
+COPY dbt/ dbt/
 COPY docker/entrypoint.sh /entrypoint.sh
 
 RUN chmod +x /entrypoint.sh
