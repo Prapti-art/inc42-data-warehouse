@@ -5,14 +5,47 @@ sources:
     database: bigquery-296406
     schema: bronze
     tables:
-      - name: gravity_forms
-      - name: tally_forms
-      - name: inc42_registered_users
-      - name: customerio_identify
-      - name: customerio_events
+      # Inc42 DB (MySQL)
+      - name: inc42_users
+      - name: inc42_usermeta
+
+      # Gravity Forms (MySQL)
+      - name: gravity_forms_entries
+      - name: gravity_forms_entry_meta
+
+      # WooCommerce (MySQL)
       - name: woocommerce_orders
-      - name: hubspot_contacts
+      - name: woocommerce_order_meta
+      - name: woocommerce_products
+      - name: woocommerce_order_items
+
+      # Customer.io (GCS → Parquet)
+      - name: cio_people
+      - name: cio_attributes
+      - name: cio_events
+      - name: cio_deliveries
+      - name: cio_delivery_contents
+      - name: cio_campaigns
+      - name: cio_campaign_actions
+      - name: cio_metrics
+      - name: cio_broadcasts
+
+      # Tally (API)
+      - name: tally_forms
+
+      # Datalabs (PostgreSQL)
       - name: dl_company_table
+      - name: dl_funding_table
+      - name: dl_profit_loss_table
+      - name: dl_balance_sheet_table
+      - name: dl_employee_trendline
+      - name: dl_people_table
+      - name: dl_people_description_table
+      - name: dl_investor_table
+      - name: dl_investment_table
+      - name: dl_sector_tagging
+      - name: dl_website_analytics_table
+      - name: dl_acquisition_table
 
   - name: silver
     database: bigquery-296406

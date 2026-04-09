@@ -1,22 +1,47 @@
--- Gold fact_orders: one row per order, linked to dimensions via keys
+-- Gold fact_orders: one row per order, linked to dim_contact via contact_key
 
-WITH orders AS (
+WITH order_meta_pivoted AS (
+    SELECT
+        m.order_id,
+        MAX(CASE WHEN m.meta_key = '_billing_email' THEN LOWER(TRIM(m.meta_value)) END) AS email,
+        MAX(CASE WHEN m.meta_key = '_billing_first_name' THEN m.meta_value END) AS billing_first_name,
+        MAX(CASE WHEN m.meta_key = '_billing_last_name' THEN m.meta_value END) AS billing_last_name,
+        MAX(CASE WHEN m.meta_key = '_billing_phone' THEN m.meta_value END) AS billing_phone,
+        MAX(CASE WHEN m.meta_key = '_billing_company' THEN m.meta_value END) AS billing_company,
+        MAX(CASE WHEN m.meta_key = '_billing_city' THEN m.meta_value END) AS billing_city,
+        MAX(CASE WHEN m.meta_key = '_billing_state' THEN m.meta_value END) AS billing_state,
+        MAX(CASE WHEN m.meta_key = '_billing_country' THEN m.meta_value END) AS billing_country,
+        MAX(CASE WHEN m.meta_key = '_order_total' THEN SAFE_CAST(m.meta_value AS NUMERIC) END) AS order_total,
+        MAX(CASE WHEN m.meta_key = '_order_tax' THEN SAFE_CAST(m.meta_value AS NUMERIC) END) AS tax_total,
+        MAX(CASE WHEN m.meta_key = '_cart_discount' THEN SAFE_CAST(m.meta_value AS NUMERIC) END) AS discount_amount,
+        MAX(CASE WHEN m.meta_key = '_payment_method_title' THEN m.meta_value END) AS payment_method,
+        MAX(CASE WHEN m.meta_key = '_order_currency' THEN m.meta_value END) AS currency,
+        MAX(CASE WHEN m.meta_key = '_billing_gst' THEN m.meta_value END) AS billing_gst
+    FROM {{ source('bronze', 'woocommerce_order_meta') }} m
+    GROUP BY m.order_id
+),
+
+orders AS (
     SELECT
         o.order_id,
-        o.order_date,
+        o.post_date AS order_date,
         o.order_status,
-        o.order_total,
-        o.tax_total,
-        o.discount_amount,
-        o.coupon_code,
-        o.payment_method,
-        o.refund_amount,
-        o.refund_reason,
-        LOWER(TRIM(o.billing_email)) AS email,
-        o.billing_city,
-        o.billing_state,
-        o.billing_country
+        om.email,
+        om.billing_first_name,
+        om.billing_last_name,
+        om.billing_phone,
+        om.billing_company,
+        om.billing_city,
+        om.billing_state,
+        om.billing_country,
+        COALESCE(om.order_total, 0) AS order_total,
+        COALESCE(om.tax_total, 0) AS tax_total,
+        COALESCE(om.discount_amount, 0) AS discount_amount,
+        om.payment_method,
+        om.currency,
+        om.billing_gst
     FROM {{ source('bronze', 'woocommerce_orders') }} o
+    LEFT JOIN order_meta_pivoted om ON o.order_id = om.order_id
 )
 
 SELECT
@@ -27,19 +52,20 @@ SELECT
     o.order_total,
     o.tax_total,
     o.discount_amount,
-    o.order_total - COALESCE(o.discount_amount, 0) - COALESCE(o.tax_total, 0) AS net_revenue,
-    COALESCE(o.refund_amount, 0) AS refund_amount,
-    o.refund_reason,
-    o.coupon_code,
+    o.order_total - o.discount_amount AS net_revenue,
     o.payment_method,
+    o.currency,
+    o.billing_company,
     o.billing_city,
     o.billing_state,
     o.billing_country,
+    o.billing_gst,
+
     -- Flags
-    CASE WHEN o.order_status = 'completed' THEN 1 ELSE 0 END AS is_completed,
-    CASE WHEN o.order_status = 'refunded' THEN 1 ELSE 0 END AS is_refunded,
-    CASE WHEN o.coupon_code IS NOT NULL THEN 1 ELSE 0 END AS used_coupon
+    CASE WHEN o.order_status = 'wc-completed' THEN 1 ELSE 0 END AS is_completed,
+    CASE WHEN o.order_status = 'wc-refunded' THEN 1 ELSE 0 END AS is_refunded,
+    CASE WHEN o.order_status = 'wc-cancelled' THEN 1 ELSE 0 END AS is_cancelled,
+    CASE WHEN o.order_status IN ('wc-processing', 'wc-completed') THEN 1 ELSE 0 END AS is_successful
 
 FROM orders o
-LEFT JOIN {{ ref('dim_contact') }} dc
-    ON o.email = dc.email
+LEFT JOIN {{ ref('dim_contact') }} dc ON o.email = dc.email

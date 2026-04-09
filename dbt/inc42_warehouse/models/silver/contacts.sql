@@ -1,147 +1,152 @@
 -- Silver contacts: one row per person with best-available fields from all sources
--- Priority: HubSpot (sales-verified) > Inc42 > Customer.io > WooCommerce > Gravity > Tally
+-- Priority: Inc42 DB (most complete) > Customer.io > WooCommerce > Tally > Gravity Forms
 
 WITH unified AS (
     SELECT * FROM {{ source('silver', 'unified_contacts') }}
 ),
 
-hubspot AS (
-    SELECT LOWER(TRIM(email)) AS email, first_name, last_name, phone,
-           company_name, designation, seniority, linkedin_url, city,
-           lifecycle_stage, lead_status, hubspot_score, hubspot_owner
-    FROM {{ source('bronze', 'hubspot_contacts') }}
+xref AS (
+    SELECT * FROM {{ source('silver', 'contact_source_xref') }}
 ),
 
+-- ── Inc42 DB: users + usermeta (pivoted) ──
 inc42 AS (
-    SELECT LOWER(TRIM(email)) AS email, first_name, last_name, mobile_number AS phone,
-           company_name, designation, linkedin_profile_url AS linkedin_url, city,
-           user_type, plus_membership_type, plus_start_date, plus_expiry_date,
-           daily_newsletter_status, weekly_newsletter_status
-    FROM {{ source('bronze', 'inc42_registered_users') }}
+    SELECT
+        LOWER(TRIM(u.user_email)) AS email,
+        MAX(CASE WHEN m.meta_key = 'first_name' THEN m.meta_value END) AS first_name,
+        MAX(CASE WHEN m.meta_key = 'last_name' THEN m.meta_value END) AS last_name,
+        MAX(CASE WHEN m.meta_key = 'billing_phone' THEN m.meta_value END) AS phone,
+        MAX(CASE WHEN m.meta_key = 'billing_company' THEN m.meta_value END) AS company_name,
+        MAX(CASE WHEN m.meta_key = 'billing_designation' THEN m.meta_value END) AS designation,
+        MAX(CASE WHEN m.meta_key = 'billing_city' THEN m.meta_value END) AS city,
+        MAX(CASE WHEN m.meta_key = 'company_type' THEN m.meta_value END) AS company_type,
+        MAX(CASE WHEN m.meta_key = 'company_function' THEN m.meta_value END) AS company_function,
+        MAX(CASE WHEN m.meta_key = '_user_designation' THEN m.meta_value END) AS user_designation,
+        u.user_registered
+    FROM {{ source('bronze', 'inc42_users') }} u
+    LEFT JOIN {{ source('bronze', 'inc42_usermeta') }} m ON u.ID = m.user_id
+    WHERE u.user_email IS NOT NULL AND u.user_email != ''
+    GROUP BY u.ID, u.user_email, u.user_registered
 ),
 
+-- ── Customer.io: people + attributes (pivoted) ──
 customerio AS (
     SELECT
-        LOWER(TRIM(JSON_VALUE(traits, '$.email'))) AS email,
-        JSON_VALUE(traits, '$.first_name') AS first_name,
-        JSON_VALUE(traits, '$.last_name') AS last_name,
-        JSON_VALUE(traits, '$.phone') AS phone,
-        JSON_VALUE(traits, '$.company_name') AS company_name,
-        JSON_VALUE(traits, '$.designation') AS designation,
-        JSON_VALUE(traits, '$.seniority') AS seniority,
-        JSON_VALUE(traits, '$.daily_newsletter_status') AS daily_newsletter,
-        JSON_VALUE(traits, '$.weekly_newsletter_status') AS weekly_newsletter,
-        JSON_VALUE(traits, '$.ai_shift_newsletter_status') AS ai_shift_newsletter,
-        JSON_VALUE(traits, '$.indepth_newsletter_status') AS indepth_newsletter,
-        JSON_VALUE(traits, '$.theoutline_newsletter_status') AS theoutline_newsletter,
-        JSON_VALUE(traits, '$.markets_newsletter_status') AS markets_newsletter,
-        JSON_VALUE(traits, '$.plus_membership_type') AS plus_membership_type,
-        JSON_VALUE(traits, '$.plus_cancellation_state') AS plus_cancellation_state,
-        JSON_VALUE(traits, '$.engagement_status') AS engagement_status,
-        CAST(JSON_VALUE(traits, '$.ltv') AS NUMERIC) AS ltv,
-        CAST(JSON_VALUE(traits, '$.sessions') AS INT64) AS sessions,
-        JSON_VALUE(traits, '$.email_opt_in') AS email_opt_in,
-        JSON_VALUE(traits, '$.whatsapp_subscription') AS whatsapp_opt_in
-    FROM {{ source('bronze', 'customerio_identify') }}
+        LOWER(TRIM(p.email_addr)) AS email,
+        MAX(CASE WHEN a.attribute_name = 'First_Name' THEN a.attribute_value END) AS first_name,
+        MAX(CASE WHEN a.attribute_name = 'Last_Name' THEN a.attribute_value END) AS last_name,
+        MAX(CASE WHEN a.attribute_name = 'Phone Number' THEN a.attribute_value END) AS phone,
+        MAX(CASE WHEN a.attribute_name IN ('Company_Name', 'Company Name') THEN a.attribute_value END) AS company_name,
+        MAX(CASE WHEN a.attribute_name = 'cio_city' THEN a.attribute_value END) AS city,
+        MAX(CASE WHEN a.attribute_name = 'LinkedIn_Profile_URL' THEN a.attribute_value END) AS linkedin_url,
+        MAX(CASE WHEN a.attribute_name = 'Work_Email' THEN a.attribute_value END) AS work_email,
+        MAX(CASE WHEN a.attribute_name = 'Full_Name' THEN a.attribute_value END) AS full_name
+    FROM {{ source('bronze', 'cio_people') }} p
+    LEFT JOIN {{ source('bronze', 'cio_attributes') }} a ON p.internal_customer_id = a.internal_customer_id
+    WHERE p.email_addr IS NOT NULL AND p.email_addr != ''
+    GROUP BY p.internal_customer_id, p.email_addr
 ),
 
+-- ── WooCommerce: order_meta (pivoted, deduped to latest order per email) ──
 woo AS (
-    SELECT
-        email, first_name, last_name, phone, company_name, city, state, country
+    SELECT email, first_name, last_name, phone, company_name, city, state, country, seniority
     FROM (
         SELECT
-            LOWER(TRIM(billing_email)) AS email,
-            billing_first_name AS first_name,
-            billing_last_name AS last_name,
-            billing_phone AS phone,
-            billing_company AS company_name,
-            billing_city AS city,
-            billing_state AS state,
-            billing_country AS country,
-            ROW_NUMBER() OVER (PARTITION BY LOWER(TRIM(billing_email)) ORDER BY order_date DESC) AS rn
-        FROM {{ source('bronze', 'woocommerce_orders') }}
+            LOWER(TRIM(MAX(CASE WHEN m.meta_key = '_billing_email' THEN m.meta_value END))) AS email,
+            MAX(CASE WHEN m.meta_key = '_billing_first_name' THEN m.meta_value END) AS first_name,
+            MAX(CASE WHEN m.meta_key = '_billing_last_name' THEN m.meta_value END) AS last_name,
+            MAX(CASE WHEN m.meta_key = '_billing_phone' THEN m.meta_value END) AS phone,
+            MAX(CASE WHEN m.meta_key = '_billing_company' THEN m.meta_value END) AS company_name,
+            MAX(CASE WHEN m.meta_key = '_billing_city' THEN m.meta_value END) AS city,
+            MAX(CASE WHEN m.meta_key = '_billing_state' THEN m.meta_value END) AS state,
+            MAX(CASE WHEN m.meta_key = '_billing_country' THEN m.meta_value END) AS country,
+            MAX(CASE WHEN m.meta_key IN ('_billing_seniority', 'billing_seniority') THEN m.meta_value END) AS seniority,
+            ROW_NUMBER() OVER (
+                PARTITION BY LOWER(TRIM(MAX(CASE WHEN m.meta_key = '_billing_email' THEN m.meta_value END)))
+                ORDER BY o.post_date DESC
+            ) AS rn
+        FROM {{ source('bronze', 'woocommerce_orders') }} o
+        JOIN {{ source('bronze', 'woocommerce_order_meta') }} m ON o.order_id = m.order_id
+        GROUP BY o.order_id, o.post_date
     )
-    WHERE rn = 1
+    WHERE rn = 1 AND email IS NOT NULL
+),
+
+-- ── Tally: already flat ──
+tally AS (
+    SELECT
+        LOWER(TRIM(COALESCE(email, work_email))) AS email,
+        first_name,
+        last_name,
+        COALESCE(phone, whatsapp_number) AS phone,
+        company_name,
+        designation,
+        linkedin_url,
+        city,
+        sector,
+        seniority
+    FROM {{ source('bronze', 'tally_forms') }}
+    WHERE COALESCE(email, work_email) IS NOT NULL
 )
 
 SELECT
     u.unified_contact_id,
     u.primary_email AS email,
 
-    -- Name: HubSpot > Inc42 > Customer.io > WooCommerce
-    COALESCE(h.first_name, i.first_name, c.first_name, w.first_name) AS first_name,
-    COALESCE(h.last_name, i.last_name, c.last_name, w.last_name) AS last_name,
+    -- Name: Inc42 > CIO > WooCommerce > Tally
+    COALESCE(
+        NULLIF(i.first_name, ''),
+        NULLIF(c.first_name, ''),
+        NULLIF(w.first_name, ''),
+        NULLIF(t.first_name, ''),
+        u.first_name
+    ) AS first_name,
+    COALESCE(
+        NULLIF(i.last_name, ''),
+        NULLIF(c.last_name, ''),
+        NULLIF(w.last_name, ''),
+        NULLIF(t.last_name, ''),
+        u.last_name
+    ) AS last_name,
 
-    -- Phone: already normalized by PySpark
+    -- Phone: PySpark already normalized
     u.primary_phone AS phone,
 
     -- Company
-    COALESCE(h.company_name, i.company_name, c.company_name, w.company_name) AS company_name,
+    COALESCE(
+        NULLIF(i.company_name, ''),
+        NULLIF(c.company_name, ''),
+        NULLIF(w.company_name, ''),
+        NULLIF(t.company_name, ''),
+        u.primary_company
+    ) AS company_name,
 
     -- Professional
-    COALESCE(h.designation, i.designation, c.designation) AS designation,
-    COALESCE(h.seniority, c.seniority) AS seniority,
-    COALESCE(h.linkedin_url, i.linkedin_url) AS linkedin_url,
+    COALESCE(NULLIF(i.designation, ''), NULLIF(i.user_designation, ''), NULLIF(t.designation, '')) AS designation,
+    COALESCE(NULLIF(w.seniority, ''), NULLIF(t.seniority, '')) AS seniority,
+    COALESCE(NULLIF(c.linkedin_url, ''), NULLIF(t.linkedin_url, '')) AS linkedin_url,
 
     -- Location
-    COALESCE(h.city, i.city, w.city) AS city,
+    COALESCE(NULLIF(i.city, ''), NULLIF(c.city, ''), NULLIF(w.city, ''), NULLIF(t.city, '')) AS city,
     w.state,
     w.country,
 
-    -- User type
-    COALESCE(i.user_type, 'unknown') AS user_type,
+    -- User type from Inc42 DB
+    i.company_type AS user_type,
 
-    -- Plus membership
-    COALESCE(i.plus_membership_type, c.plus_membership_type) AS plus_membership_type,
-    i.plus_start_date,
-    i.plus_expiry_date,
-    c.plus_cancellation_state,
-    CASE
-        WHEN i.plus_expiry_date IS NOT NULL
-        THEN DATE_DIFF(i.plus_expiry_date, CURRENT_DATE(), DAY)
-        ELSE NULL
-    END AS plus_days_to_expiry,
-    CASE
-        WHEN c.plus_cancellation_state = 'cancelled' AND i.plus_expiry_date > CURRENT_DATE()
-        THEN 'active_cancelling'
-        WHEN c.plus_cancellation_state = 'cancelled' AND (i.plus_expiry_date <= CURRENT_DATE() OR i.plus_expiry_date IS NULL)
-        THEN 'churned'
-        WHEN i.plus_membership_type IS NOT NULL
-        THEN 'active'
-        ELSE NULL
-    END AS plus_status,
-
-    -- Newsletters
-    COALESCE(c.daily_newsletter, i.daily_newsletter_status) AS daily_newsletter,
-    COALESCE(c.weekly_newsletter, i.weekly_newsletter_status) AS weekly_newsletter,
-    c.ai_shift_newsletter,
-    c.indepth_newsletter,
-    c.theoutline_newsletter,
-    c.markets_newsletter,
-
-    -- Engagement
-    c.engagement_status,
-    COALESCE(c.ltv, 0) AS ltv,
-    COALESCE(c.sessions, 0) AS sessions,
-
-    -- Channel reachability
-    c.email_opt_in,
-    c.whatsapp_opt_in,
-
-    -- Lead (HubSpot)
-    h.lifecycle_stage,
-    h.lead_status,
-    h.hubspot_score,
-    h.hubspot_owner,
-
-    -- Source count
+    -- Source coverage
     u.source_count,
     u.found_in_systems,
+    u.all_emails,
+    u.all_phones,
+
+    -- Registration date
+    i.user_registered AS inc42_registered_at,
 
     CURRENT_TIMESTAMP() AS updated_at
 
 FROM unified u
-LEFT JOIN hubspot h ON u.primary_email = h.email
 LEFT JOIN inc42 i ON u.primary_email = i.email
 LEFT JOIN customerio c ON u.primary_email = c.email
 LEFT JOIN woo w ON u.primary_email = w.email
+LEFT JOIN tally t ON u.primary_email = t.email

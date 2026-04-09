@@ -1,30 +1,44 @@
--- Gold dim_company: for company-level fact tables (financials, funding, headcount)
+-- Gold dim_company: company dimension powered by Datalabs (75K+ companies)
 
 SELECT
     ROW_NUMBER() OVER (ORDER BY company_id) AS company_key,
     company_id,
     company_name,
-    legal_name,
     website,
     domain,
-    founded_year,
-    hq_city,
-    hq_state,
     sector,
     sub_sector,
     business_model,
-    company_status,
-    employee_count,
-    latest_revenue_inr,
-    latest_pat_inr,
-    is_profitable,
-    net_margin_pct,
-    total_funding_inr,
-    last_funding_stage,
+    city,
+    state,
+    country,
+    founded_year,
+    tags,
+    linkedin,
+
+    -- Funding
+    total_funding_usd,
     last_funding_date,
-    key_investors,
-    monthly_web_visits,
-    app_rating,
-    glassdoor_rating
+    last_funding_stage,
+    last_funding_type,
+    total_funding_rounds,
+
+    -- Financials
+    revenue_from_operations,
+    total_revenue,
+    profit_loss_for_the_period,
+    total_expenses,
+    is_profitable,
+    financials_as_of,
+
+    -- Employees
+    employee_count,
+    employee_as_of,
+
+    -- Web traffic
+    monthly_visits,
+    bounce_rate,
+    visit_duration,
+    pages_per_visit
 
 FROM {{ ref('companies') }}

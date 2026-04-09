@@ -26,6 +26,9 @@ default_args = {
         "MYSQL_HOST": "inc42-prod.mysql.database.azure.com",
         "MYSQL_USER": "{{ var.value.MYSQL_USER }}",
         "MYSQL_PASSWORD": "{{ var.value.MYSQL_PASSWORD }}",
+        "PG_HOST": "datalabsdata.postgres.database.azure.com",
+        "PG_USER": "{{ var.value.PG_USER }}",
+        "PG_PASSWORD": "{{ var.value.PG_PASSWORD }}",
     },
 }
 
@@ -90,6 +93,13 @@ with DAG(
         doc="Load WooCommerce tables from MySQL → bronze.woocommerce_*",
     )
 
+    # Datalabs: 30 company tables from PostgreSQL → BigQuery Bronze
+    ingest_datalabs = BashOperator(
+        task_id="load_datalabs",
+        bash_command=f"python {PROJECT_DIR}/ingestion/scripts/datalabs_ingest.py",
+        doc="Load 30 Datalabs tables from PostgreSQL → bronze.dl_*",
+    )
+
     # Future:
     # ingest_hubspot = BashOperator(...)
 
@@ -146,7 +156,7 @@ with DAG(
 
     # Phase 1: All ingestion runs in parallel
     # Phase 2: PySpark runs after ALL ingestion completes
-    [ingest_bronze, ingest_customerio, ingest_tally, ingest_inc42_db, ingest_gravity, ingest_woocommerce] >> spark_identity
+    [ingest_bronze, ingest_customerio, ingest_tally, ingest_inc42_db, ingest_gravity, ingest_woocommerce, ingest_datalabs] >> spark_identity
 
     # Future:
     # [ingest_bronze, ingest_customerio, ingest_tally, ingest_gravity, ingest_woo, ingest_hubspot] >> spark_identity
