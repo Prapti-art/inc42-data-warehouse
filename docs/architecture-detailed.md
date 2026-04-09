@@ -1060,36 +1060,153 @@ PySpark identity resolution ran successfully on real data:
 - `silver.unified_contacts` — 330,481 rows (one per person: primary email, phone, name, company, all known emails/phones, source count)
 - `silver.contact_source_xref` — 1,028,654 rows (maps every source record to its unified person)
 
-### Airflow DAG: Full Orchestration
+### Airflow DAG: Full Orchestration (End-to-End Automated)
 
 ```
-Phase 1 (parallel):           Phase 2:
-┌─────────────────────┐
-│ load_bronze_tables   │───┐
-│ load_customerio      │───┤
-│ load_tally_forms     │───┼──→ spark_identity_resolution ──→ [dbt Silver → Gold → Reverse ETL]
-│ load_inc42_db        │───┤                                   (coming next)
-│ load_gravity_forms   │───┤
-│ load_woocommerce     │───┘
-└─────────────────────┘
+Midnight IST (18:30 UTC) — Airflow triggers automatically
+    │
+    ▼ PHASE 1: Ingestion (all parallel)
+    ├── load_inc42_db          (MySQL → BQ)        186K users
+    ├── load_gravity_forms     (MySQL → BQ)        790K entries
+    ├── load_woocommerce       (MySQL → BQ)        22K orders
+    ├── load_customerio        (GCS → BQ)          2.4M rows
+    ├── load_tally_forms       (API → BQ)          3.2K submissions
+    ├── load_datalabs          (PostgreSQL → BQ)   10.5M rows
+    │
+    ▼ PHASE 2: PySpark Identity Resolution
+    └── spark_identity_resolution               1M records → 328K people
+    │
+    ▼ PHASE 3: dbt (Silver + Gold)
+    ├── dbt run (11 models, ~40 sec)
+    └── dbt test (data quality checks)
+    │
+    ▼ DONE — contact_360 + company_360 refreshed daily
 ```
 
-Schedule: Daily at midnight IST (`30 18 * * *` UTC). All ingestion runs in parallel, PySpark runs after all complete.
+Schedule: Daily at midnight IST (`30 18 * * *` UTC).
+
+### Bronze Layer: 25.3M Rows (48 Tables)
+
+| Source | Method | Tables | Rows |
+|--------|--------|--------|------|
+| Inc42 DB | MySQL direct | 2 | 6,829,243 |
+| Gravity Forms | MySQL direct | 3 | 4,554,259 |
+| Datalabs | PostgreSQL direct | 30 | 10,484,970 |
+| Customer.io | GCS parquet auto-sync | 9 | 2,444,951 |
+| WooCommerce | MySQL direct | 4 | 998,169 |
+| Tally | REST API | 1 | 3,224 |
+| **Total** | | **49** | **25,314,816** |
+
+### Silver Layer: Identity Resolution + Enrichment
+
+- `silver.unified_contacts` — 330K rows (PySpark: email match → phone match)
+- `silver.contact_source_xref` — 1M rows (source record → person mapping)
+- `silver.contacts` — 328K rows (dbt: best fields from all sources, newsletter subscriptions, email reachability)
+- `silver.companies` — 75K rows (dbt: Datalabs company + funding + P&L + employees + web analytics)
+
+**Data Quality Filters:**
+- Test/junk emails excluded (test%, testing%, example.com, mailinator)
+- Test product names excluded from orders/events
+- Internal @inc42.com orders excluded from revenue calculations
+- Tally deduped to latest submission per email
+- WooCommerce deduped to latest order per email
+- P&L prefers Consolidated over Standalone
+
+### Gold Layer: Star Schema + 360 Views
+
+**Dimensions:**
+- `dim_contact` — 328K people (contact_key for fact table joins)
+- `dim_company` — 75K companies (company_key)
+- `dim_date` — 2014-2030 calendar with Indian fiscal year
+
+**Facts:**
+- `fact_orders` — 21.7K orders (normalized products: Inc42 Plus, Datalabs Pro, membership duration)
+- `fact_form_submissions` — 775K submissions (normalized: form_category/subcategory/edition)
+- `fact_event_attendance` — 21.7K registrations (normalized product names)
+- `fact_marketing_touchpoints` — 330K email deliveries (sent/delivered/opened/clicked/bounced)
+
+**Wide Tables:**
+- `contact_360` — 328K rows, 80+ columns per person:
+  - Identity: email, phone, name, LinkedIn, all known emails/phones
+  - Professional: designation, seniority, job function (from Datalabs people via LinkedIn match)
+  - Education: institution, degree, premier institute alumni flags (IIT/IIM/ISB/BITS/Global Top)
+  - Company enrichment: sector (Inc42 thesis), funding, financials, employees, web traffic, investors
+  - Inc42 tags: Unicorn, Soonicorn, Minicorn, FAST42, 30 Startups To Watch, Startup Watchlist
+  - Orders: total_orders, revenue, refunds, net_ltv, membership/addon breakdown
+  - Events: registrations, active, cancelled
+  - Forms: submissions, unique forms
+  - Marketing: emails opened/clicked/bounced, unsubscribes
+  - Newsletters: Daily, Weekly, InDepth, Moneyball, TheOutline, Markets subscription status
+  - Reachability: email_reachability (reachable/unsubscribed/suppressed/not_in_customerio), WhatsApp opt-in
+  - Engagement score: weighted composite (emails × 2 + clicks × 5 + events × 10 + forms × 8 + orders × 15)
+  - Properties: all Inc42 properties interacted with (paid + free)
+  - Is investor: person's own investments + portfolio companies
+
+- `company_360` — 75K rows:
+  - Company profile: name, website, sector (Inc42 thesis), sub-sectors, business model
+  - Funding: total USD, last round date/stage/type, total rounds, investor names + count
+  - Financials: revenue, profit/loss, is_profitable (Consolidated preferred)
+  - Employees + web traffic (monthly visits)
+  - Inc42 tags: Unicorn/Soonicorn/Minicorn/FAST42/30 Startups To Watch/Startup Watchlist/UpNext/Tracked
+  - Inc42 engagement: contacts in warehouse, orders from company, revenue from company
+
+### Product Normalization (WooCommerce)
+
+| Raw Name | Normalized | Type | Duration |
+|----------|-----------|------|----------|
+| Inc42 Plus - Annual Membership | Inc42 Plus | membership | Annual |
+| Inc42 Plus - Annual Memberships | Inc42 Plus | membership | Annual |
+| Inc42 Plus Monthly Subscription | Inc42 Plus | membership | Monthly |
+| Inc42 Plus - 3 Year Membership | Inc42 Plus | membership | 3 Year |
+| Datalabs Pro - Quarterly | Datalabs Pro | membership | Quarterly |
+| Datalabs Pro - Yearly | Datalabs Pro | membership | Annual |
+| Credit Topup - 100 | Credit Topup | addon | — |
+| Test orders | **excluded** | — | — |
+
+### Form Normalization (Gravity Forms + Tally)
+
+| Category | Subcategory | Example Edition | Submissions |
+|----------|-------------|-----------------|-------------|
+| Newsletter | Signup | Moneyball, Weekly, InDepth, TheOutline | 630K+ |
+| Report Download | Funding Report | 2021, H1 2021, Q1 2022 | 100K+ |
+| FAST42 | Application | 2024, D2C Edition 2025, 5th Edition | 1.6K |
+| D2C Event | D2CX Converge | All Edition, Hyderabad | 9.2K |
+| AI Workshop | HR Leaders / Startup Leaders | Sep/Nov/Dec 2024 | 536 |
+| GenAI Summit | Application / Sponsor | 2024, 2025 | 1.8K |
+| Webinar | Niti Aayog / 100X VC / Inc42 AMA | Covid-19, May 2020 | 2.5K |
 
 ### Infrastructure
 
-| Component | Where | Cost |
-|-----------|-------|------|
-| BigQuery | GCP (`bigquery-296406`) | Free tier (first 10GB/month) |
-| GCS | `gs://inc42-data-warehouse-raw/` | ~$1/month |
-| GCP VM | `e2-medium` (2 vCPU, 4GB) Singapore | ~$15/month |
-| Docker | Packages Python 3.11 + Java 21 + Airflow + PySpark + dbt | — |
-| Airflow UI | `http://34.126.220.115:8080` | — |
+| Component | VM | URL | Cost |
+|-----------|-----|-----|------|
+| BigQuery | GCP managed | console.cloud.google.com | Free tier |
+| GCS | GCP managed | gs://inc42-data-warehouse-raw/ | ~$1/month |
+| Airflow + PySpark + dbt | inc42-data-warehouse (e2-medium, 4GB) | http://34.131.172.143:8080 | ~$15/month |
+| Streamlit Dashboard | inc42-dashboard (e2-small, 2GB) | http://34.131.94.83:8501 | ~$7/month |
+| **Total** | | | **~$23/month** |
+
+### Streamlit Dashboard (7 pages)
+
+| Page | What it shows |
+|------|---------------|
+| Executive Overview | Key metrics, source distribution, engagement tiers, sectors, unicorn/alumni counts |
+| Revenue & Products | Product performance, membership duration, top spenders, order status |
+| Newsletter & Marketing | 6 newsletter subscriber counts, open/click/bounce rates, newsletter-to-payment conversion |
+| Events & Programs | FAST42 by edition, D2C events, AI Workshop, GenAI Summit, report downloads |
+| Lead Discovery | 8+ filters (sector, city, engagement, unicorn, alumni) + CSV export |
+| Contact Lookup | Search any person → full 360 view (identity, professional, company intel, engagement) |
+| Company Intelligence | 75K companies with funding, sectors, Inc42 tags, filter and export |
 
 ### What's Next
 
-- [ ] dbt Silver models (dim_contact, contacts, fact tables) using real unified data
-- [ ] dbt Gold models (contact_360, company_360) on real data
-- [ ] Reverse ETL to Customer.io
+- [x] ~~dbt Silver models using real unified data~~
+- [x] ~~dbt Gold models (contact_360, company_360) on real data~~
+- [x] ~~Datalabs PostgreSQL ingestion (company data)~~
+- [x] ~~Streamlit dashboard deployed on VM~~
+- [x] ~~Full Airflow automation (Ingestion → PySpark → dbt)~~
+- [ ] Reverse ETL to Customer.io (push enriched data back)
 - [ ] HubSpot ingestion (deferred)
-- [ ] Datalabs PostgreSQL ingestion (company data)
+- [ ] Email domain matching for better company enrichment (email → domain → company)
+- [ ] Google OAuth for dashboard (needs subdomain like data.inc42.com)
+- [ ] dbt docs deployed on VM (http://34.131.172.143:8082)
+- [ ] Looker Studio dashboards for leadership

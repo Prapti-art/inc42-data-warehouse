@@ -194,3 +194,11 @@ LEFT JOIN inc42 i ON u.primary_email = i.email
 LEFT JOIN customerio c ON u.primary_email = c.email
 LEFT JOIN woo w ON u.primary_email = w.email
 LEFT JOIN tally t ON u.primary_email = t.email
+
+-- Exclude test/junk contacts
+WHERE u.primary_email NOT LIKE '%test%'
+  AND u.primary_email NOT LIKE '%testing%'
+  AND u.primary_email NOT LIKE '%example.com'
+  AND u.primary_email NOT LIKE '%mailinator%'
+  AND COALESCE(u.first_name, '') NOT LIKE '%test%'
+  AND u.primary_email IS NOT NULL
