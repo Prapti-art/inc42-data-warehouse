@@ -126,20 +126,17 @@ with DAG(
     #  PHASE 3: DBT (after PySpark)
     # ════════════════════════════════════════════
 
-    # dbt_silver = BashOperator(
-    #     task_id="dbt_run_silver",
-    #     bash_command="cd /opt/dbt/inc42_warehouse && dbt run --select silver.*",
-    # )
-    #
-    # dbt_gold = BashOperator(
-    #     task_id="dbt_run_gold",
-    #     bash_command="cd /opt/dbt/inc42_warehouse && dbt run --select gold.*",
-    # )
-    #
-    # dbt_test = BashOperator(
-    #     task_id="dbt_test",
-    #     bash_command="cd /opt/dbt/inc42_warehouse && dbt test",
-    # )
+    dbt_run = BashOperator(
+        task_id="dbt_run_all",
+        bash_command=f"cd {PROJECT_DIR}/dbt/inc42_warehouse && dbt run",
+        doc="Run all dbt models: Silver (contacts, companies) → Gold (dims, facts, 360 views)",
+    )
+
+    dbt_test = BashOperator(
+        task_id="dbt_test",
+        bash_command=f"cd {PROJECT_DIR}/dbt/inc42_warehouse && dbt test",
+        doc="Run dbt tests: uniqueness, not_null checks on key columns",
+    )
 
     # ════════════════════════════════════════════
     #  PHASE 4: REVERSE ETL (after dbt)
@@ -156,10 +153,9 @@ with DAG(
 
     # Phase 1: All ingestion runs in parallel
     # Phase 2: PySpark runs after ALL ingestion completes
+    # Phase 1 → Phase 2 → Phase 3
     [ingest_bronze, ingest_customerio, ingest_tally, ingest_inc42_db, ingest_gravity, ingest_woocommerce, ingest_datalabs] >> spark_identity
+    spark_identity >> dbt_run >> dbt_test
 
     # Future:
-    # [ingest_bronze, ingest_customerio, ingest_tally, ingest_gravity, ingest_woo, ingest_hubspot] >> spark_identity
-    # [spark_identity, spark_company, spark_revenue] >> dbt_silver
-    # dbt_silver >> dbt_gold >> dbt_test
     # dbt_test >> [retl_customerio, retl_slack, retl_sheets]
