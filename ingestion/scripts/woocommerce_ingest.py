@@ -1,8 +1,8 @@
 """
 WooCommerce (MySQL) → BigQuery Bronze Ingestion
 
-Reads WooCommerce tables from inc42prod MySQL database
-and loads into BigQuery Bronze tables.
+Reads ALL WooCommerce tables from inc42prod MySQL database
+with ALL columns — keeping source data rich.
 
 Usage:
     export MYSQL_HOST="inc42-prod.mysql.database.azure.com"
@@ -30,20 +30,18 @@ os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS",
 BQ_PROJECT = "bigquery-296406"
 bq = bigquery.Client(project=BQ_PROJECT)
 
-# WooCommerce queries — we filter 42_posts to only orders & products
 TABLES = {
     "woocommerce_orders": {
         "query": """
-            SELECT p.ID as order_id, p.post_date, p.post_date_gmt,
-                   p.post_status as order_status, p.post_modified, p.post_modified_gmt
-            FROM 42_posts p
-            WHERE p.post_type = 'shop_order'
+            SELECT *
+            FROM 42_posts
+            WHERE post_type = 'shop_order'
         """,
         "bq_table": "bronze.woocommerce_orders",
     },
     "woocommerce_order_meta": {
         "query": """
-            SELECT pm.meta_id, pm.post_id as order_id, pm.meta_key, pm.meta_value
+            SELECT pm.*
             FROM 42_postmeta pm
             INNER JOIN 42_posts p ON pm.post_id = p.ID
             WHERE p.post_type = 'shop_order'
@@ -52,17 +50,28 @@ TABLES = {
     },
     "woocommerce_products": {
         "query": """
-            SELECT p.ID as product_id, p.post_title as product_name,
-                   p.post_status, p.post_date, p.post_modified,
-                   p.post_excerpt as short_description
-            FROM 42_posts p
-            WHERE p.post_type IN ('product', 'product_variation')
+            SELECT *
+            FROM 42_posts
+            WHERE post_type IN ('product', 'product_variation')
         """,
         "bq_table": "bronze.woocommerce_products",
+    },
+    "woocommerce_product_meta": {
+        "query": """
+            SELECT pm.*
+            FROM 42_postmeta pm
+            INNER JOIN 42_posts p ON pm.post_id = p.ID
+            WHERE p.post_type IN ('product', 'product_variation')
+        """,
+        "bq_table": "bronze.woocommerce_product_meta",
     },
     "woocommerce_order_items": {
         "query": "SELECT * FROM 42_woocommerce_order_items",
         "bq_table": "bronze.woocommerce_order_items",
+    },
+    "woocommerce_order_itemmeta": {
+        "query": "SELECT * FROM 42_woocommerce_order_itemmeta",
+        "bq_table": "bronze.woocommerce_order_itemmeta",
     },
 }
 
@@ -115,6 +124,9 @@ def load_table(name, config):
         print(f"✓ {table.num_rows:,} rows in BQ")
         return table.num_rows
 
+    except Exception as e:
+        print(f"✗ ERROR: {e}")
+        return 0
     finally:
         conn.close()
 

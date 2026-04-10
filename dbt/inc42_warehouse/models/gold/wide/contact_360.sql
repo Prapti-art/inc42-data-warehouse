@@ -249,8 +249,10 @@ events AS (
     SELECT
         contact_key,
         COUNT(*) AS total_events_registered,
-        SUM(CASE WHEN registration_status = 'registered' THEN 1 ELSE 0 END) AS total_events_active,
-        SUM(cancelled_flag) AS total_events_cancelled
+        SUM(is_active) AS total_events_active,
+        SUM(cancelled_flag) AS total_events_cancelled,
+        COUNTIF(event_type = 'event') AS total_events_attended,
+        COUNTIF(event_type = 'program') AS total_programs_joined
     FROM {{ ref('fact_event_attendance') }}
     GROUP BY contact_key
 ),
@@ -277,17 +279,46 @@ marketing AS (
 ),
 
 -- ═══════════════════════════════════════════════
--- PROPERTY INTERACTIONS
+-- PROPERTY INTERACTIONS (properly categorized)
 -- ═══════════════════════════════════════════════
 properties AS (
-    SELECT DISTINCT contact_key, event_name AS property_name, product_type AS property_type, TRUE AS is_paid
-    FROM {{ ref('fact_event_attendance') }}
-    WHERE registration_status = 'registered'
+    -- Memberships (paid via WooCommerce)
+    SELECT DISTINCT contact_key,
+        product_name AS property_name,
+        'membership' AS property_type,
+        TRUE AS is_paid
+    FROM {{ ref('fact_orders') }}
+    WHERE is_successful = 1
 
     UNION ALL
 
-    SELECT DISTINCT contact_key, form_name AS property_name, 'program' AS property_type, FALSE AS is_paid
+    -- Events (D2C, AI Workshop, GenAI Summit, Webinars)
+    SELECT DISTINCT contact_key,
+        event_name AS property_name,
+        'event' AS property_type,
+        CASE WHEN is_paid_event = 1 THEN TRUE ELSE FALSE END AS is_paid
+    FROM {{ ref('fact_event_attendance') }}
+    WHERE event_type = 'event'
+
+    UNION ALL
+
+    -- Programs (FAST42, Startup Program, BrandLabs)
+    SELECT DISTINCT contact_key,
+        event_name AS property_name,
+        'program' AS property_type,
+        FALSE AS is_paid
+    FROM {{ ref('fact_event_attendance') }}
+    WHERE event_type = 'program'
+
+    UNION ALL
+
+    -- Content (Newsletters, Report Downloads, Giveaways)
+    SELECT DISTINCT contact_key,
+        form_name AS property_name,
+        'content' AS property_type,
+        FALSE AS is_paid
     FROM {{ ref('fact_form_submissions') }}
+    WHERE form_category IN ('Newsletter', 'Report Download', 'Giveaway')
 ),
 
 property_agg AS (
@@ -295,11 +326,54 @@ property_agg AS (
         contact_key,
         COUNT(DISTINCT property_name) AS total_properties_interacted,
         STRING_AGG(DISTINCT property_name, ', ') AS properties_interacted_names,
+
+        -- By type
+        COUNT(DISTINCT CASE WHEN property_type = 'membership' THEN property_name END) AS membership_properties,
+        STRING_AGG(DISTINCT CASE WHEN property_type = 'membership' THEN property_name END, ', ') AS membership_names,
+
+        COUNT(DISTINCT CASE WHEN property_type = 'event' THEN property_name END) AS event_properties,
+        STRING_AGG(DISTINCT CASE WHEN property_type = 'event' THEN property_name END, ', ') AS event_names,
+
+        COUNT(DISTINCT CASE WHEN property_type = 'program' THEN property_name END) AS program_properties,
+        STRING_AGG(DISTINCT CASE WHEN property_type = 'program' THEN property_name END, ', ') AS program_names,
+
+        COUNT(DISTINCT CASE WHEN property_type = 'content' THEN property_name END) AS content_properties,
+
+        -- Paid vs free
         COUNT(DISTINCT CASE WHEN is_paid THEN property_name END) AS total_paid_properties,
         STRING_AGG(DISTINCT CASE WHEN is_paid THEN property_name END, ', ') AS paid_properties_names,
+
         COUNT(DISTINCT property_type) AS property_types_touched,
         STRING_AGG(DISTINCT property_type, ', ') AS property_types_names
     FROM properties
+    GROUP BY contact_key
+),
+
+-- ═══════════════════════════════════════════════
+-- INTEREST TAGS (based on interactions)
+-- ═══════════════════════════════════════════════
+interest_tags AS (
+    SELECT
+        contact_key,
+        -- D2C interest: attended D2C events OR downloaded D2C reports OR D2C in form_category
+        MAX(CASE WHEN form_category IN ('D2C Event') OR form_subcategory LIKE '%D2C%' THEN TRUE ELSE FALSE END) AS interest_d2c,
+
+        -- AI interest: AI Workshop, GenAI Summit, AI Tracker
+        MAX(CASE WHEN form_category IN ('AI Workshop', 'GenAI Summit') OR form_name LIKE '%AI%' OR form_name LIKE '%GenAI%' THEN TRUE ELSE FALSE END) AS interest_ai,
+
+        -- Fintech interest: downloaded fintech reports
+        MAX(CASE WHEN form_subcategory LIKE '%Fintech%' THEN TRUE ELSE FALSE END) AS interest_fintech,
+
+        -- Ecommerce interest
+        MAX(CASE WHEN form_subcategory LIKE '%Ecommerce%' OR form_subcategory LIKE '%Consumer Internet%' THEN TRUE ELSE FALSE END) AS interest_ecommerce,
+
+        -- Startup ecosystem: startup submissions, FAST42, BigShift, reports
+        MAX(CASE WHEN form_category IN ('FAST42', 'Startup Program') OR form_subcategory LIKE '%Funding%' OR form_subcategory LIKE '%Startup Ecosystem%' THEN TRUE ELSE FALSE END) AS interest_startups,
+
+        -- Investor content: VC guides, angel investor ebooks
+        MAX(CASE WHEN form_subcategory LIKE '%VC%' OR form_subcategory LIKE '%Angel%' OR form_category = 'Giveaway' THEN TRUE ELSE FALSE END) AS interest_investor_content
+
+    FROM {{ ref('fact_form_submissions') }}
     GROUP BY contact_key
 )
 
@@ -406,6 +480,8 @@ SELECT
     COALESCE(ev.total_events_registered, 0) AS total_events_registered,
     COALESCE(ev.total_events_active, 0) AS total_events_active,
     COALESCE(ev.total_events_cancelled, 0) AS total_events_cancelled,
+    COALESCE(ev.total_events_attended, 0) AS total_events_attended,
+    COALESCE(ev.total_programs_joined, 0) AS total_programs_joined,
 
     -- ═══ FORMS ═══
     COALESCE(f.total_form_submissions, 0) AS total_form_submissions,
@@ -454,6 +530,23 @@ SELECT
     COALESCE(p.property_types_touched, 0) AS property_types_touched,
     p.property_types_names,
 
+    -- By type
+    COALESCE(p.membership_properties, 0) AS membership_properties,
+    p.membership_names,
+    COALESCE(p.event_properties, 0) AS event_properties,
+    p.event_names,
+    COALESCE(p.program_properties, 0) AS program_properties,
+    p.program_names,
+    COALESCE(p.content_properties, 0) AS content_properties,
+
+    -- ═══ INTEREST TAGS ═══
+    COALESCE(it.interest_d2c, FALSE) AS interest_d2c,
+    COALESCE(it.interest_ai, FALSE) AS interest_ai,
+    COALESCE(it.interest_fintech, FALSE) AS interest_fintech,
+    COALESCE(it.interest_ecommerce, FALSE) AS interest_ecommerce,
+    COALESCE(it.interest_startups, FALSE) AS interest_startups,
+    COALESCE(it.interest_investor_content, FALSE) AS interest_investor_content,
+
     -- ═══ SOURCE COVERAGE ═══
     c.source_count,
     c.found_in_systems,
@@ -488,3 +581,4 @@ LEFT JOIN people_experience pe ON pm.person_uuid = pe.people_uuid
 LEFT JOIN people_education edu ON pm.person_uuid = edu.people_uuid
 LEFT JOIN people_all_education pae ON pm.person_uuid = pae.people_uuid
 LEFT JOIN person_as_investor pai ON pm.person_uuid = pai.person_uuid_clean
+LEFT JOIN interest_tags it ON c.contact_key = it.contact_key
