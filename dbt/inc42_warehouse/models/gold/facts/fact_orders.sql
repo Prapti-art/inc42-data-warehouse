@@ -136,7 +136,7 @@ SELECT
     o.order_total,
     o.tax_total,
     o.discount_amount,
-    o.order_total - o.discount_amount AS net_revenue,
+    GREATEST(o.order_total - o.discount_amount, 0) AS net_revenue,
     o.payment_method,
     o.currency,
 

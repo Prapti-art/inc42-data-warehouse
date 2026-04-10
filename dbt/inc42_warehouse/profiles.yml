@@ -5,7 +5,7 @@ inc42_warehouse:
       type: bigquery
       method: service-account
       project: bigquery-296406
-      keyfile: /secrets/bq-service-account.json
+      keyfile: "{{ env_var('BQ_KEYFILE', '/Users/cepl/Documents/inc42-data-warehouse/.secrets/bq-service-account.json') }}"
       dataset: silver
       location: asia-south1
       threads: 4

@@ -134,8 +134,17 @@ SELECT
         u.last_name
     ) AS last_name,
 
-    -- Phone: PySpark already normalized
-    u.primary_phone AS phone,
+    -- Phone: PySpark normalized, filter fake/junk numbers
+    CASE
+        WHEN u.primary_phone IN (
+            '+919999999999', '+910000000000', '+911111111111', '+919999988888',
+            '+919999999990', '+919999999991', '+919999999998', '+919999900000',
+            '+919999911111', '+919999990000'
+        ) THEN NULL
+        WHEN u.primary_phone IS NOT NULL AND LENGTH(REGEXP_REPLACE(u.primary_phone, r'[^0-9]', '')) < 10
+            THEN NULL
+        ELSE u.primary_phone
+    END AS phone,
 
     -- Company
     COALESCE(
@@ -156,8 +165,17 @@ SELECT
     w.state,
     w.country,
 
-    -- User type from Inc42 DB
-    i.company_type AS user_type,
+    -- User type from Inc42 DB (normalized: underscores → spaces, singularized)
+    CASE
+        WHEN REPLACE(i.company_type, '_', ' ') IN ('Early Stage Startups') THEN 'Early Stage Startup'
+        WHEN REPLACE(i.company_type, '_', ' ') IN ('Growth Stage Startups', 'Growth Stage Startup') THEN 'Growth Stage Startup'
+        WHEN REPLACE(i.company_type, '_', ' ') IN ('Late Stage Startups') THEN 'Late Stage Startup'
+        WHEN REPLACE(i.company_type, '_', ' ') IN ('Listed Startups') THEN 'Listed Startup'
+        WHEN REPLACE(i.company_type, '_', ' ') IN ('Indian Corporates') THEN 'Indian Corporate'
+        WHEN REPLACE(i.company_type, '_', ' ') = 'Investors' THEN 'Investor'
+        WHEN i.company_type IS NOT NULL AND TRIM(i.company_type) != '' THEN REPLACE(i.company_type, '_', ' ')
+        ELSE NULL
+    END AS user_type,
 
     -- Source coverage
     u.source_count,
@@ -166,12 +184,36 @@ SELECT
     u.all_phones,
 
     -- Newsletter subscriptions (from Customer.io)
-    CASE WHEN c.daily_newsletter = 'true' THEN 'subscribed' ELSE 'unsubscribed' END AS daily_newsletter,
-    CASE WHEN c.weekly_newsletter = 'true' THEN 'subscribed' ELSE 'unsubscribed' END AS weekly_newsletter,
-    CASE WHEN c.indepth_newsletter = 'true' THEN 'subscribed' ELSE 'unsubscribed' END AS indepth_newsletter,
-    CASE WHEN c.moneyball_newsletter = 'true' THEN 'subscribed' ELSE 'unsubscribed' END AS moneyball_newsletter,
-    CASE WHEN c.theoutline_newsletter = 'true' THEN 'subscribed' ELSE 'unsubscribed' END AS theoutline_newsletter,
-    CASE WHEN c.markets_newsletter = 'true' THEN 'subscribed' ELSE 'unsubscribed' END AS markets_newsletter,
+    CASE
+        WHEN c.daily_newsletter = 'true' THEN 'subscribed'
+        WHEN c.daily_newsletter = 'false' THEN 'unsubscribed'
+        ELSE 'unknown'
+    END AS daily_newsletter,
+    CASE
+        WHEN c.weekly_newsletter = 'true' THEN 'subscribed'
+        WHEN c.weekly_newsletter = 'false' THEN 'unsubscribed'
+        ELSE 'unknown'
+    END AS weekly_newsletter,
+    CASE
+        WHEN c.indepth_newsletter = 'true' THEN 'subscribed'
+        WHEN c.indepth_newsletter = 'false' THEN 'unsubscribed'
+        ELSE 'unknown'
+    END AS indepth_newsletter,
+    CASE
+        WHEN c.moneyball_newsletter = 'true' THEN 'subscribed'
+        WHEN c.moneyball_newsletter = 'false' THEN 'unsubscribed'
+        ELSE 'unknown'
+    END AS moneyball_newsletter,
+    CASE
+        WHEN c.theoutline_newsletter = 'true' THEN 'subscribed'
+        WHEN c.theoutline_newsletter = 'false' THEN 'unsubscribed'
+        ELSE 'unknown'
+    END AS theoutline_newsletter,
+    CASE
+        WHEN c.markets_newsletter = 'true' THEN 'subscribed'
+        WHEN c.markets_newsletter = 'false' THEN 'unsubscribed'
+        ELSE 'unknown'
+    END AS markets_newsletter,
     CASE WHEN c.unsubscribed_all = 'true' THEN TRUE ELSE FALSE END AS is_globally_unsubscribed,
     COALESCE(c.is_suppressed, FALSE) AS is_suppressed,
     COALESCE(c.whatsapp_optin, 'No') AS whatsapp_optin,
