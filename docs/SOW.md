@@ -115,6 +115,16 @@ All fields are sourced from the Gold layer (`contact_360`, `company_360`, lifecy
 
 **Not synced to any destination** (intentional): raw PII beyond standardized email/phone (e.g., full postal address, government IDs), financial line-item data (orders table rows), raw Datalabs scraped fields, any field marked sensitive in the Gold-layer column catalog.
 
+**Write semantics — how each field is written to the destination:**
+
+| Field class | Write rule |
+|---|---|
+| `email` (Customer.io, HubSpot) / `distinct_id` (PostHog) | **Lookup key only** — used to identify the target record for upsert. Never overwritten. |
+| `unified_contact_id` | **Always written.** This is warehouse-native information the destination doesn't have; it's what enables cross-system joins and is the core reason reverse ETL runs. |
+| `phone_e164`, `first_name`, `last_name`, `company_name`, `designation`, `city`, `state` | **Upgrade-only (append-if-absent).** Written only when (a) the destination field is null/empty, or (b) the warehouse value is the standardized form of an existing value (E.164 phone normalization, trimmed/proper-cased name). Never overwrites a non-null destination value with a conflicting warehouse value. |
+| Engagement scores, Plus tier, lifecycle, segment flags, cohort membership, custom fields | **Always written (authoritative).** Warehouse is the source of truth for these derived fields; they're overwritten on every sync. |
+| Tracked events (Customer.io) | **Append-only.** Each event is a new record; never mutates history. |
+
 #### 3.2.2 Phased rollout of data points per destination
 
 Each destination is rolled out in three phases — Foundation, Activation, Enrichment — so marketing/sales/product teams can start using the sync before the full catalog lands. Week windows align with §5.2.
@@ -144,6 +154,24 @@ Each destination is rolled out in three phases — Foundation, Activation, Enric
 | P3 — Company groups + advanced cohorts | W7 | `$groupidentify` (group type `company`): `group_key` (= `datalabs_company_id`), `name`, `industry`, `funding_stage`, `total_funding_raised_inr`, `employee_count`, `employee_bucket`, `hq_city`, `hq_state`, `inc42_tags`, `first_seen_at`. Additional cohorts: Founder alumni, Recent event attendees. `$identify` adds `signup_source` |
 
 **Phase gates:** each phase must pass (a) schema validation in staging, (b) ≤2% payload error rate on a 24h dry-run, and (c) stakeholder sign-off (marketing for Customer.io, sales for HubSpot, product for PostHog) before the next phase starts.
+
+#### 3.2.3 Audience eligibility — who gets synced
+
+Not every contact in the warehouse is synced to every destination. Each destination has its own eligible-audience view in the Gold layer (`reverse_etl_audience_customerio`, `_hubspot`, `_posthog`), and only rows in that view flow to that destination. This keeps destinations focused, avoids per-seat/per-contact costs on irrelevant records, and reduces noise for the teams using each tool.
+
+| Destination | Eligibility rule | Excluded | Est. volume* |
+|---|---|---|---|
+| **Customer.io** | Active marketing universe: contact has a reachable email or phone **AND** (any marketing engagement in last 18 months OR Plus member OR registered for an event in last 12 months OR subscribed to any newsletter). | Global unsubscribers, hard-bounced emails with no valid phone, internal/test accounts, accounts marked `do_not_contact`. | ~200K of 330K |
+| **HubSpot** | Sales-relevant universe: `lead_stage` in (MQL, SQL, customer) **OR** Plus member **OR** associated with a target-account company (from Datalabs target list) **OR** had a direct sales touch in last 24 months. | Newsletter-only signups with no other engagement, consumer contacts outside India without B2B signal, internal/test accounts. | ~30K–50K of 330K |
+| **PostHog** | Enrich existing PostHog persons only: warehouse does not create new persons. A person is synced if a PostHog `distinct_id` already exists for the `unified_contact_id` (via email or login event match). Companies as groups: companies where ≥1 user has PostHog activity **OR** companies on the Datalabs target-account list. | Contacts who have never used the product (no PostHog presence to enrich). | All identified product users |
+
+*Volumes are planning estimates; exact numbers are confirmed from Gold audience views during W2.
+
+**Governance of eligibility:**
+- Audience views are defined in dbt and reviewed/approved in a PR by the destination's owning team (marketing / sales / product).
+- Any change to eligibility criteria follows the change-control process in §10.
+- Opt-outs, unsubscribes, and `do_not_contact` flags from any source system are honored across **all** destinations within 24 hours.
+- A contact leaving the eligible audience triggers a **suppress** action in the destination (archive in HubSpot, suppress in Customer.io, remove from cohort in PostHog) — not a delete, so audit history is preserved.
 
 ### 3.3 Conversational Data Access (Chatbot)
 
