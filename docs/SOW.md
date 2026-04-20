@@ -75,6 +75,46 @@ The warehouse is already operational. Metrics below are from the live pipeline a
 | B7 | Rollback | 📋 Planned | Last-known-good snapshot per segment per destination; one-command revert DAG scoped to a single destination. |
 | B8 | Rate-limit & retry | 📋 Planned | Exponential backoff per destination's API contract; dead-letter queue in GCS for persistent failures. |
 
+#### 3.2.1 Field catalog — what gets pushed to each destination
+
+All fields are sourced from the Gold layer (`contact_360`, `company_360`, lifecycle and fact tables). The catalog below is the target scope; additions/removals follow the change-control process in §10.
+
+**Customer.io (Person attributes + tracked events)**
+
+| Group | Fields |
+|---|---|
+| Identity | `email` (id), `unified_contact_id`, `phone_e164`, `first_name`, `last_name` |
+| Professional | `company_name`, `designation`, `sector`, `city`, `state` |
+| Engagement | `engagement_score` (0–100), `engagement_tier`, `email_reachable`, `phone_reachable`, `last_open_at`, `last_click_at`, `last_event_attended_at`, `newsletter_subscriptions[]`, `channel_preference` |
+| Commerce | `total_orders`, `total_spend_inr`, `first_order_at`, `last_order_at`, `avg_order_value_inr` |
+| Plus membership | `plus_tier`, `plus_started_at`, `plus_expiry_date`, `plus_renewal_status`, `plus_ltv_inr` |
+| Lead lifecycle | `lead_stage`, `lead_score`, `lead_source` |
+| Segment flags | `is_churn_risk`, `is_upsell_candidate`, `is_power_user`, `is_founder_alumni`, `is_plus_member` |
+| Tracked events | `event_registered` (event_id, attended), `order_placed`, `plus_purchased`, `plus_renewed`, `plus_expired`, `newsletter_subscribed`, `newsletter_unsubscribed`, `email_bounced` |
+
+**HubSpot (Contacts + Companies via CRM v3)**
+
+| Object | Fields |
+|---|---|
+| Contact (standard) | `email`, `firstname`, `lastname`, `phone`, `mobilephone`, `jobtitle`, `lifecyclestage` (mapped from `lead_stage`), `hs_lead_status`, `city`, `state`, `country` |
+| Contact (custom) | `unified_contact_id`, `lead_score`, `engagement_score`, `engagement_tier`, `plus_tier`, `plus_expiry_date`, `last_event_attended`, `last_order_date`, `total_spend_inr`, `sector_interest` (multi), `channel_preference`, `founder_alumni` |
+| Company (standard) | `name`, `domain`, `industry`, `numberofemployees`, `annualrevenue`, `city`, `state`, `country` |
+| Company (custom, from Datalabs) | `funding_stage`, `total_funding_raised_inr`, `last_funding_date`, `lead_investor`, `inc42_tags` (multi), `company_360_score` |
+| Associations | Contact ↔ Company via `unified_contact_id` ↔ `datalabs_company_id` |
+| Optional (Phase 2) | Deal creation on Plus purchase (closed-won), with amount and term |
+
+**PostHog (Persons + Groups + Cohorts)**
+
+| Call | Fields |
+|---|---|
+| `$identify` (person) | `distinct_id` = `unified_contact_id`, `email`, `name`, `plus_tier`, `plus_started_at`, `plus_expiry_date`, `engagement_score`, `engagement_tier`, `sector`, `role`, `city`, `state`, `signup_source`, `lead_stage`, `newsletter_count`, `event_count_lifetime`, `order_count_lifetime`, `ltv_bucket`, `is_churn_risk`, `is_upsell_candidate`, `is_power_user` |
+| `$groupidentify` (company) | group type `company`, `group_key` = `datalabs_company_id`, `name`, `industry`, `funding_stage`, `total_funding_raised_inr`, `employee_count`, `employee_bucket`, `hq_city`, `hq_state`, `inc42_tags`, `first_seen_at` |
+| Materialized cohorts (for feature flags + analytics) | Plus active, Churn risk (Plus expiring ≤30d), Upsell (high engagement + non-Plus), Founder alumni, Power users (top 10% engagement), Recent event attendees |
+
+> PostHog receives warehouse-derived **attributes and cohorts** only. Product event streams continue to originate from the Inc42 app → PostHog directly; the warehouse does not replay raw events.
+
+**Not synced to any destination** (intentional): raw PII beyond standardized email/phone (e.g., full postal address, government IDs), financial line-item data (orders table rows), raw Datalabs scraped fields, any field marked sensitive in the Gold-layer column catalog.
+
 ### 3.3 Conversational Data Access (Chatbot)
 
 **End-user flow:** User asks *"Give me all Plus members in Bangalore who attended an event in the last 6 months"* in Slack or a web UI and receives a downloadable Excel file or Google Sheet link with the results.
