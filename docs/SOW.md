@@ -115,6 +115,36 @@ All fields are sourced from the Gold layer (`contact_360`, `company_360`, lifecy
 
 **Not synced to any destination** (intentional): raw PII beyond standardized email/phone (e.g., full postal address, government IDs), financial line-item data (orders table rows), raw Datalabs scraped fields, any field marked sensitive in the Gold-layer column catalog.
 
+#### 3.2.2 Phased rollout of data points per destination
+
+Each destination is rolled out in three phases — Foundation, Activation, Enrichment — so marketing/sales/product teams can start using the sync before the full catalog lands. Week windows align with §5.2.
+
+**Customer.io**
+
+| Phase | Week | Data points pushed |
+|---|---|---|
+| P1 — Foundation | W2–W3 | Identity (`email`, `unified_contact_id`, `phone_e164`, `first_name`, `last_name`), basic profile (`company_name`, `designation`, `city`, `state`), Plus core (`plus_tier`, `plus_started_at`, `plus_expiry_date`), flags (`is_plus_member`, `is_churn_risk`) |
+| P2 — Activation | W3–W4 | Engagement (`engagement_score`, `engagement_tier`, `email_reachable`, `phone_reachable`, `last_open_at`, `last_click_at`), newsletter subs + `channel_preference`, commerce (`total_orders`, `total_spend_inr`, `last_order_at`, `avg_order_value_inr`), tracked events (`event_registered`, `order_placed`, `plus_purchased/renewed/expired`, `newsletter_subscribed/unsubscribed`, `email_bounced`), flags (`is_upsell_candidate`, `is_power_user`) |
+| P3 — Enrichment | W4–W5 | Sector, `plus_renewal_status`, `plus_ltv_inr`, lead lifecycle (`lead_stage`, `lead_score`, `lead_source`), `first_order_at`, `last_event_attended_at`, `is_founder_alumni`, event enrichment (event_id, attended flag) |
+
+**HubSpot**
+
+| Phase | Week | Data points pushed |
+|---|---|---|
+| P1 — Contacts foundation | W4–W5 | Standard contact (`email`, `firstname`, `lastname`, `phone`, `mobilephone`, `jobtitle`, `city`, `state`, `country`), custom (`unified_contact_id`), `lifecyclestage` mapped from `lead_stage`, `lead_score` |
+| P2 — Engagement + Companies foundation | W5–W6 | Custom contact (`engagement_score`, `engagement_tier`, `plus_tier`, `plus_expiry_date`, `last_event_attended`, `last_order_date`, `total_spend_inr`), standard company (`name`, `domain`, `industry`, `numberofemployees`, `annualrevenue`, `city`, `state`, `country`), Contact↔Company association |
+| P3 — Datalabs enrichment + Deals | W6 | Company custom (`funding_stage`, `total_funding_raised_inr`, `last_funding_date`, `lead_investor`, `inc42_tags`, `company_360_score`), contact custom (`sector_interest`, `channel_preference`, `founder_alumni`, `hs_lead_status`), optional Deal creation on Plus purchase (closed-won) |
+
+**PostHog**
+
+| Phase | Week | Data points pushed |
+|---|---|---|
+| P1 — Person identity | W5–W6 | `$identify`: `distinct_id` (= `unified_contact_id`), `email`, `name`, `plus_tier`, `sector`, `role`, `city`, `state` |
+| P2 — Engagement + cohorts | W6 | `$identify` adds: `engagement_score`, `engagement_tier`, `plus_started_at`, `plus_expiry_date`, `lead_stage`, `newsletter_count`, `event_count_lifetime`, `order_count_lifetime`, `ltv_bucket`, `is_churn_risk`, `is_upsell_candidate`, `is_power_user`. Materialized cohorts: Plus active, Churn risk, Upsell, Power users |
+| P3 — Company groups + advanced cohorts | W7 | `$groupidentify` (group type `company`): `group_key` (= `datalabs_company_id`), `name`, `industry`, `funding_stage`, `total_funding_raised_inr`, `employee_count`, `employee_bucket`, `hq_city`, `hq_state`, `inc42_tags`, `first_seen_at`. Additional cohorts: Founder alumni, Recent event attendees. `$identify` adds `signup_source` |
+
+**Phase gates:** each phase must pass (a) schema validation in staging, (b) ≤2% payload error rate on a 24h dry-run, and (c) stakeholder sign-off (marketing for Customer.io, sales for HubSpot, product for PostHog) before the next phase starts.
+
 ### 3.3 Conversational Data Access (Chatbot)
 
 **End-user flow:** User asks *"Give me all Plus members in Bangalore who attended an event in the last 6 months"* in Slack or a web UI and receives a downloadable Excel file or Google Sheet link with the results.
