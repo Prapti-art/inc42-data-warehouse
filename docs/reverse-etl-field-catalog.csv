@@ -1,0 +1,280 @@
+Level,Tier,Category,Field,DataType,Availability,CustomerIO,HubSpot,PostHog,WriteRule,Phase,Notes
+Contact,0,Technical,contact_key,STRING,A,N,N,N,internal,,Internal warehouse key; not synced
+Contact,1,Identity,unified_contact_id,STRING,A,Y,Y,Y,always,,Warehouse-native ID; enables cross-destination joins
+Contact,1,Identity,email,STRING,A,Y,Y,Y,lookup_key,,Upsert key; never overwritten
+Contact,1,Identity,first_name,STRING,A,Y,Y,Y,append_if_null,,
+Contact,1,Identity,last_name,STRING,A,Y,Y,Y,append_if_null,,
+Contact,1,Identity,full_name,STRING,A,Y,Y,Y,append_if_null,,Derived concat(first_name last_name)
+Contact,1,Identity,phone,STRING,A,Y,Y,N,append_if_null,,Raw phone
+Contact,1,Identity,phone_e164,STRING,B,Y,Y,N,append_if_null,,Standardised E.164 form; derive from phone
+Contact,1,Identity,linkedin_url,STRING,A,Y,Y,Y,append_if_null,,
+Contact,1,Identity,gender,STRING,C,Y,Y,Y,append_if_null,,Needs form capture going forward
+Contact,2,Role,user_type,ENUM,B,Y,Y,Y,always,,Startup Leader / Operator / Investor / Govt / Other
+Contact,2,Role,user_sub_type,ENUM,B,Y,Y,Y,always,,Founder / CEO / VC Partner / etc.
+Contact,2,Role,seniority,STRING,A,Y,Y,Y,always,,Existing column; from Datalabs or designation
+Contact,2,Role,seniority_level,ENUM,B,Y,Y,Y,always,,IC / Manager / Director / VP / CXO / Founder
+Contact,2,Role,job_function,STRING,A,Y,Y,Y,always,,Existing column from Datalabs
+Contact,2,Role,function,ENUM,B,Y,Y,Y,always,,Engineering / Product / Marketing / Sales / Finance / Ops / Legal / Other
+Contact,2,Role,designation,STRING,A,Y,Y,Y,append_if_null,,Job title raw
+Contact,2,Role,is_founder,BOOL,B,Y,Y,Y,always,,Historical ever-founded a company
+Contact,2,Role,is_investor,BOOL,A,Y,Y,Y,always,,Existing column; derived from Datalabs
+Contact,2,Role,is_angel_investor,BOOL,B,Y,Y,Y,always,,Side-investor even if day job is other
+Contact,3,Location,city,STRING,A,Y,Y,Y,append_if_null,,
+Contact,3,Location,state,STRING,A,Y,Y,Y,append_if_null,,
+Contact,3,Location,country,STRING,A,Y,Y,Y,append_if_null,,
+Contact,3,Location,timezone,STRING,B,Y,Y,Y,append_if_null,,Derive from city/state
+Contact,3,Location,hometown_city,STRING,C,N,N,N,append_if_null,,Rarely captured; low priority
+Contact,3,Location,is_nri,BOOL,B,Y,Y,Y,always,,Non-Resident Indian — signal from address/phone country
+Contact,4,Career,total_years_experience,INTEGER,B,Y,Y,Y,append_if_null,,Derive from Datalabs people_experience start_dates
+Contact,4,Career,time_at_current_company,INTEGER,B,Y,Y,Y,append_if_null,,Months at current role from Datalabs
+Contact,4,Career,previous_companies,ARRAY,B,Y,Y,Y,append_if_null,,From Datalabs people_experience history
+Contact,4,Career,previous_roles,ARRAY,B,Y,Y,Y,append_if_null,,From Datalabs people_experience history
+Contact,5,Education,dl_education_institution,STRING,A,Y,Y,Y,append_if_null,,Existing column latest education
+Contact,5,Education,dl_education_degree,STRING,A,Y,Y,Y,append_if_null,,
+Contact,5,Education,dl_education_specialisation,STRING,A,Y,Y,Y,append_if_null,,
+Contact,5,Education,alma_mater,STRING,B,Y,Y,Y,append_if_null,,Cleaned version of dl_education_institution
+Contact,5,Education,alma_mater_tier,ENUM,B,Y,Y,Y,always,,IIT / IIM / ISB / BITS / NIT / Global-top / Other
+Contact,5,Education,highest_degree,ENUM,B,Y,Y,Y,append_if_null,,Bachelors / Masters / PhD / MBA / CA
+Contact,5,Education,graduation_year,INTEGER,B,Y,Y,Y,append_if_null,,From Datalabs
+Contact,5,Education,is_iit_alumni,BOOL,A,Y,Y,Y,always,,Existing
+Contact,5,Education,is_iim_alumni,BOOL,A,Y,Y,Y,always,,Existing
+Contact,5,Education,is_isb_alumni,BOOL,A,Y,Y,Y,always,,Existing
+Contact,5,Education,is_bits_alumni,BOOL,A,Y,Y,Y,always,,Existing
+Contact,5,Education,is_nmims_alumni,BOOL,A,Y,Y,Y,always,,Existing
+Contact,5,Education,is_global_top_alumni,BOOL,A,Y,Y,Y,always,,Existing Harvard/Stanford/MIT etc.
+Contact,5,Education,is_premier_institute_alumni,BOOL,A,Y,Y,Y,always,,Existing rollup
+Contact,6,FounderHistory,ventures_founded,ARRAY,B,Y,Y,Y,append_if_null,,Companies this person founded
+Contact,6,FounderHistory,ventures_founded_count,INTEGER,B,Y,Y,Y,always,,
+Contact,6,FounderHistory,exits_count,INTEGER,B,Y,Y,Y,always,,Successful exits from Datalabs
+Contact,6,FounderHistory,has_exited,BOOL,B,Y,Y,Y,always,,
+Contact,7,InvestorSpecific,person_investments_made,INTEGER,A,Y,Y,Y,always,,Existing count of fundings they participated in
+Contact,7,InvestorSpecific,person_portfolio_companies,ARRAY,A,Y,Y,Y,always,,Existing portfolio list
+Contact,7,InvestorSpecific,thesis_sectors,ARRAY,B,Y,Y,Y,always,,Sectors they invest in; derive from portfolio sectors
+Contact,8,Inc42Relationship,dl_person_id,STRING,A,N,Y,N,internal,,Datalabs person_uuid — internal mapping
+Contact,8,Inc42Relationship,dl_person_description,STRING,A,N,Y,N,append_if_null,,Long-form bio from Datalabs
+Contact,8,Inc42Relationship,speaker_at_inc42_event,BOOL,B,Y,Y,Y,always,,Derive from event_attendance where role=speaker
+Contact,8,Inc42Relationship,is_founder_alumni,BOOL,B,Y,Y,Y,always,,Attended an Inc42 founder program FAST42 etc.
+Contact,8,Inc42Relationship,source_count,INTEGER,A,Y,Y,Y,always,,Existing
+Contact,8,Inc42Relationship,found_in_systems,STRING,A,Y,Y,Y,always,,Existing which of the 7 sources
+Contact,8,Inc42Relationship,all_emails,ARRAY,A,N,N,N,internal,,Audit; not synced
+Contact,8,Inc42Relationship,all_phones,ARRAY,A,N,N,N,internal,,Audit; not synced
+Contact,8,Inc42Relationship,first_seen_at,TIMESTAMP,B,Y,Y,Y,always,,Earliest touchpoint across all sources
+Contact,8,Inc42Relationship,years_with_inc42,INTEGER,B,Y,Y,Y,always,,Derive from first_seen_at
+Contact,9,CurrentCompany,company_name,STRING,A,Y,Y,Y,append_if_null,,From contact source
+Contact,9,CurrentCompany,dl_current_company,STRING,A,Y,Y,Y,append_if_null,,Resolved current company from Datalabs people
+Contact,9,CurrentCompany,dl_company_id,STRING,A,N,Y,Y,always,,Datalabs company_uuid
+Contact,9,CurrentCompany,company_sector,STRING,A,Y,Y,Y,always,,Inc42 sector thesis
+Contact,9,CurrentCompany,company_sub_sectors,STRING,A,Y,Y,Y,always,,
+Contact,9,CurrentCompany,company_business_model,STRING,A,Y,Y,Y,always,,B2B / B2C / SaaS etc.
+Contact,9,CurrentCompany,company_founded_year,INTEGER,A,Y,Y,Y,always,,
+Contact,9,CurrentCompany,company_website,STRING,A,Y,Y,Y,always,,
+Contact,9,CurrentCompany,company_linkedin,STRING,A,Y,Y,Y,always,,
+Contact,9,CurrentCompany,company_employee_count,INTEGER,A,Y,Y,Y,always,,
+Contact,9,CurrentCompany,company_monthly_visits,INTEGER,A,N,Y,Y,always,,Website traffic; low value for CIO
+Contact,10,CurrentCompanyFunding,company_total_funding_usd,NUMERIC,A,Y,Y,Y,always,,Existing
+Contact,10,CurrentCompanyFunding,company_last_funding_date,DATE,A,Y,Y,Y,always,,Existing
+Contact,10,CurrentCompanyFunding,company_last_funding_stage,STRING,A,Y,Y,Y,always,,Existing
+Contact,10,CurrentCompanyFunding,company_total_funding_rounds,INTEGER,A,Y,Y,Y,always,,Existing
+Contact,10,CurrentCompanyFunding,company_investors,STRING,A,Y,Y,Y,always,,Existing all investors concat
+Contact,10,CurrentCompanyFunding,company_investor_count,INTEGER,A,Y,Y,Y,always,,Existing
+Contact,11,CurrentCompanyFinancials,company_revenue,NUMERIC,A,N,Y,Y,always,,Existing revenue_from_operations
+Contact,11,CurrentCompanyFinancials,company_profit_loss,NUMERIC,A,N,Y,Y,always,,Existing
+Contact,11,CurrentCompanyFinancials,company_is_profitable,BOOL,A,N,Y,Y,always,,Existing
+Contact,12,CurrentCompanyTags,company_inc42_tags,STRING,A,Y,Y,Y,always,,Existing concat of tags
+Contact,12,CurrentCompanyTags,company_is_unicorn,BOOL,A,Y,Y,Y,always,,Existing
+Contact,12,CurrentCompanyTags,company_is_soonicorn,BOOL,A,Y,Y,Y,always,,Existing
+Contact,12,CurrentCompanyTags,company_is_minicorn,BOOL,A,Y,Y,Y,always,,Existing
+Contact,12,CurrentCompanyTags,company_is_fast42_winner,BOOL,A,Y,Y,Y,always,,Existing
+Contact,12,CurrentCompanyTags,company_is_30_startups_to_watch,BOOL,A,Y,Y,Y,always,,Existing
+Contact,12,CurrentCompanyTags,company_is_startup_watchlist,BOOL,A,Y,Y,Y,always,,Existing
+Contact,12,CurrentCompanyTags,company_is_inc42_upnext,BOOL,A,Y,Y,Y,always,,Existing
+Contact,12,CurrentCompanyTags,company_is_tracked,BOOL,A,Y,Y,Y,always,,Existing Datalabs coverage
+Contact,13,EngagementPrimitives,total_orders,INTEGER,A,Y,Y,Y,always,,Existing
+Contact,13,EngagementPrimitives,total_revenue,NUMERIC,A,Y,Y,Y,always,,Existing
+Contact,13,EngagementPrimitives,total_refunds,NUMERIC,A,Y,Y,N,always,,Existing
+Contact,13,EngagementPrimitives,net_ltv,NUMERIC,A,Y,Y,Y,always,,Existing
+Contact,13,EngagementPrimitives,total_refunded_orders,INTEGER,A,Y,Y,N,always,,Existing
+Contact,13,EngagementPrimitives,total_cancelled_orders,INTEGER,A,Y,Y,N,always,,Existing
+Contact,13,EngagementPrimitives,total_membership_orders,INTEGER,A,Y,Y,Y,always,,Existing
+Contact,13,EngagementPrimitives,total_addon_orders,INTEGER,A,Y,Y,N,always,,Existing
+Contact,13,EngagementPrimitives,total_events_registered,INTEGER,A,Y,Y,Y,always,,Existing
+Contact,13,EngagementPrimitives,total_events_active,INTEGER,A,Y,Y,N,always,,Existing
+Contact,13,EngagementPrimitives,total_events_cancelled,INTEGER,A,Y,Y,N,always,,Existing
+Contact,13,EngagementPrimitives,total_events_attended,INTEGER,A,Y,Y,Y,always,,Existing
+Contact,13,EngagementPrimitives,total_programs_joined,INTEGER,A,Y,Y,Y,always,,Existing
+Contact,13,EngagementPrimitives,total_form_submissions,INTEGER,A,Y,Y,Y,always,,Existing
+Contact,13,EngagementPrimitives,unique_forms_submitted,INTEGER,A,Y,Y,Y,always,,Existing
+Contact,13,EngagementPrimitives,total_emails_opened,INTEGER,A,Y,Y,Y,always,,Existing
+Contact,13,EngagementPrimitives,total_emails_clicked,INTEGER,A,Y,Y,Y,always,,Existing
+Contact,13,EngagementPrimitives,total_unsubscribes,INTEGER,A,Y,Y,N,always,,Existing
+Contact,13,EngagementPrimitives,total_bounced,INTEGER,A,Y,Y,N,always,,Existing
+Contact,13,EngagementPrimitives,total_touchpoints,INTEGER,A,Y,Y,Y,always,,Existing
+Contact,13,EngagementPrimitives,last_order_at,TIMESTAMP,B,Y,Y,Y,always,,Derive max(order_date) from fact_orders
+Contact,13,EngagementPrimitives,last_event_at,TIMESTAMP,B,Y,Y,Y,always,,Derive from fact_event_attendance
+Contact,13,EngagementPrimitives,last_open_at,TIMESTAMP,B,Y,Y,Y,always,,Derive from fact_marketing_touchpoints
+Contact,13,EngagementPrimitives,last_click_at,TIMESTAMP,B,Y,Y,Y,always,,
+Contact,14,Newsletters,daily_newsletter,STRING,A,Y,Y,Y,always,,Existing subscription status
+Contact,14,Newsletters,weekly_newsletter,STRING,A,Y,Y,Y,always,,Existing
+Contact,14,Newsletters,indepth_newsletter,STRING,A,Y,Y,Y,always,,Existing
+Contact,14,Newsletters,moneyball_newsletter,STRING,A,Y,Y,Y,always,,Existing
+Contact,14,Newsletters,theoutline_newsletter,STRING,A,Y,Y,Y,always,,Existing
+Contact,14,Newsletters,markets_newsletter,STRING,A,Y,Y,Y,always,,Existing
+Contact,14,Newsletters,total_newsletters_subscribed,INTEGER,A,Y,Y,Y,always,,Existing derived count
+Contact,14,Newsletters,newsletter_subscriptions,ARRAY,B,Y,Y,Y,always,,Array of subscribed newsletter codes
+Contact,15,Reachability,is_globally_unsubscribed,BOOL,A,Y,Y,Y,always,,Existing
+Contact,15,Reachability,is_suppressed,BOOL,A,Y,Y,Y,always,,Existing
+Contact,15,Reachability,whatsapp_optin,BOOL,A,Y,Y,Y,always,,Existing
+Contact,15,Reachability,email_reachability,STRING,A,Y,Y,Y,always,,Existing
+Contact,15,Reachability,phone_reachable,BOOL,B,Y,Y,N,always,,Derive from recent call consent + valid number
+Contact,15,Reachability,channel_preference,ENUM,B,Y,Y,Y,always,,email / whatsapp / phone / none — derived from engagement
+Contact,15,Reachability,do_not_call,BOOL,C,Y,Y,N,always,,Needs consent capture
+Contact,15,Reachability,do_not_email,BOOL,C,Y,Y,Y,always,,Needs consent capture
+Contact,15,Reachability,marketing_consent_source,STRING,C,Y,Y,Y,append_if_null,,Which form/source consent was captured on
+Contact,15,Reachability,marketing_consent_at,TIMESTAMP,C,Y,Y,Y,append_if_null,,
+Contact,16,Plus,is_plus_member,BOOL,B,Y,Y,Y,always,,Derive from membership orders with active dates
+Contact,16,Plus,plus_tier,ENUM,B,Y,Y,Y,always,,monthly / annual / lifetime / none
+Contact,16,Plus,plus_started_at,TIMESTAMP,B,Y,Y,Y,always,,
+Contact,16,Plus,plus_expiry_date,DATE,B,Y,Y,Y,always,,
+Contact,16,Plus,plus_renewal_status,ENUM,B,Y,Y,Y,always,,renewing / at-risk / expired
+Contact,16,Plus,plus_ltv_inr,NUMERIC,B,Y,Y,Y,always,,Sum of Plus orders
+Contact,17,DerivedScores,engagement_score,NUMERIC,A,Y,Y,Y,always,,Existing formula
+Contact,17,DerivedScores,engagement_tier,ENUM,B,Y,Y,Y,always,,low / mid / high — from score buckets
+Contact,17,DerivedScores,lead_stage,ENUM,B,Y,Y,Y,always,,subscriber / MQL / SQL / customer / churned
+Contact,17,DerivedScores,lead_score,NUMERIC,B,Y,Y,Y,always,,Composite lead score
+Contact,17,DerivedScores,ltv_bucket,ENUM,B,Y,Y,Y,always,,none / low / mid / high
+Contact,17,DerivedScores,churn_risk_score,NUMERIC,B,Y,Y,Y,always,,
+Contact,18,CohortFlags,is_churn_risk,BOOL,B,Y,Y,Y,always,,
+Contact,18,CohortFlags,is_upsell_candidate,BOOL,B,Y,Y,Y,always,,
+Contact,18,CohortFlags,is_power_user,BOOL,B,Y,Y,Y,always,,Top 10% engagement
+Contact,18,CohortFlags,is_high_intent,BOOL,B,Y,Y,Y,always,,Recent multi-touch engagement
+Contact,19,InterestTags,interest_d2c,BOOL,A,Y,Y,Y,always,,Existing derived
+Contact,19,InterestTags,interest_ai,BOOL,A,Y,Y,Y,always,,Existing derived
+Contact,19,InterestTags,interest_fintech,BOOL,A,Y,Y,Y,always,,Existing derived
+Contact,19,InterestTags,interest_ecommerce,BOOL,A,Y,Y,Y,always,,Existing derived
+Contact,19,InterestTags,interest_startups,BOOL,A,Y,Y,Y,always,,Existing derived
+Contact,19,InterestTags,interest_investor_content,BOOL,A,Y,Y,Y,always,,Existing derived
+Contact,20,Properties,total_properties_interacted,INTEGER,A,Y,Y,Y,always,,Existing
+Contact,20,Properties,properties_interacted_names,STRING,A,N,Y,N,always,,Existing concat may be long
+Contact,20,Properties,total_paid_properties,INTEGER,A,Y,Y,Y,always,,Existing
+Contact,20,Properties,paid_properties_names,STRING,A,N,Y,N,always,,Existing
+Contact,20,Properties,property_types_touched,INTEGER,A,Y,Y,Y,always,,Existing
+Contact,20,Properties,property_types_names,STRING,A,Y,Y,Y,always,,Existing
+Contact,20,Properties,membership_properties,INTEGER,A,Y,Y,Y,always,,Existing
+Contact,20,Properties,membership_names,STRING,A,Y,Y,Y,always,,Existing
+Contact,20,Properties,event_properties,INTEGER,A,Y,Y,Y,always,,Existing
+Contact,20,Properties,event_names,STRING,A,Y,Y,N,always,,Existing
+Contact,20,Properties,program_properties,INTEGER,A,Y,Y,Y,always,,Existing
+Contact,20,Properties,program_names,STRING,A,Y,Y,N,always,,Existing
+Contact,20,Properties,content_properties,INTEGER,A,Y,Y,Y,always,,Existing
+Contact,21,ExternalIDs,hubspot_contact_id,STRING,B,Y,Y,Y,append_if_null,,Write destination ID back after upsert
+Contact,21,ExternalIDs,customerio_person_id,STRING,B,N,Y,Y,append_if_null,,
+Contact,21,ExternalIDs,posthog_distinct_id,STRING,B,Y,Y,N,append_if_null,,
+Contact,21,ExternalIDs,woocommerce_customer_id,STRING,B,N,Y,N,append_if_null,,
+Contact,21,ExternalIDs,tally_respondent_id,STRING,B,N,Y,N,append_if_null,,
+Contact,22,SecondaryChannels,secondary_email,STRING,A,N,Y,N,append_if_null,,From all_emails array first alternate
+Contact,22,SecondaryChannels,secondary_phone,STRING,A,N,Y,N,append_if_null,,From all_phones array first alternate
+Company,0,Technical,company_key,STRING,A,N,N,N,internal,,
+Company,1,Identity,company_id,STRING,A,N,Y,Y,always,,Datalabs UUID
+Company,1,Identity,company_name,STRING,A,N,Y,Y,append_if_null,,
+Company,1,Identity,legal_entity_name,STRING,C,N,Y,N,append_if_null,,From MCA filings needs ingestion
+Company,1,Identity,website,STRING,A,N,Y,Y,append_if_null,,
+Company,1,Identity,domain,STRING,A,N,Y,Y,append_if_null,,Primary domain
+Company,1,Identity,domain_aliases,ARRAY,B,N,Y,N,append_if_null,,Secondary domains derived
+Company,1,Identity,linkedin,STRING,A,N,Y,Y,append_if_null,,
+Company,1,Identity,twitter_handle,STRING,C,N,Y,N,append_if_null,,
+Company,1,Identity,crunchbase_url,STRING,C,N,Y,N,append_if_null,,
+Company,1,Identity,logo_url,STRING,C,N,Y,N,append_if_null,,
+Company,2,Classification,sector,STRING,A,N,Y,Y,always,,Inc42 sector thesis
+Company,2,Classification,sub_sectors,STRING,A,N,Y,Y,always,,
+Company,2,Classification,dl_sector_raw,STRING,A,N,Y,N,always,,Raw Datalabs sector
+Company,2,Classification,dl_sub_sector_raw,STRING,A,N,Y,N,always,,
+Company,2,Classification,business_model,STRING,A,N,Y,Y,always,,
+Company,2,Classification,company_type,ENUM,B,N,Y,Y,always,,startup / investor / corporate / govt / media / academic
+Company,2,Classification,industry_vertical,STRING,B,N,Y,Y,always,,
+Company,3,Location,city,STRING,A,N,Y,Y,append_if_null,,HQ city
+Company,3,Location,state,STRING,A,N,Y,Y,append_if_null,,
+Company,3,Location,country,STRING,A,N,Y,Y,append_if_null,,
+Company,3,Location,office_locations,ARRAY,C,N,Y,N,append_if_null,,Multi-office requires new data
+Company,4,Registration,founded_year,INTEGER,A,N,Y,Y,always,,
+Company,4,Registration,incorporation_date,DATE,C,N,Y,N,append_if_null,,MCA filing
+Company,4,Registration,cin,STRING,C,N,Y,N,append_if_null,,India Corporate ID
+Company,4,Registration,gst_id,STRING,C,N,Y,N,append_if_null,,
+Company,4,Registration,is_listed,BOOL,B,N,Y,Y,always,,Public listed
+Company,4,Registration,stock_ticker,STRING,C,N,Y,N,append_if_null,,
+Company,5,Size,employee_count,INTEGER,A,N,Y,Y,always,,From Datalabs trendline
+Company,5,Size,employee_bucket,ENUM,B,N,Y,Y,always,,1-10 / 11-50 / 51-200 / 201-1000 / 1000+
+Company,5,Size,employee_count_as_of,DATE,B,N,Y,N,always,,When employee_count was measured
+Company,6,Funding,total_funding_usd,NUMERIC,A,N,Y,Y,always,,
+Company,6,Funding,total_funding_inr,NUMERIC,B,N,Y,Y,always,,Converted from USD
+Company,6,Funding,last_funding_date,DATE,A,N,Y,Y,always,,
+Company,6,Funding,last_funding_stage,STRING,A,N,Y,Y,always,,
+Company,6,Funding,last_funding_type,STRING,A,N,Y,Y,always,,
+Company,6,Funding,last_funding_amount_inr,NUMERIC,B,N,Y,Y,always,,
+Company,6,Funding,total_funding_rounds,INTEGER,A,N,Y,Y,always,,
+Company,6,Funding,investors,STRING,A,N,Y,Y,always,,All investors concat
+Company,6,Funding,key_investors,ARRAY,B,N,Y,Y,always,,Top 5 by round size or lead status
+Company,6,Funding,lead_investor,STRING,B,N,Y,Y,always,,Latest round lead
+Company,6,Funding,investor_count,INTEGER,A,N,Y,Y,always,,
+Company,6,Funding,has_raised_series_a,BOOL,B,N,Y,Y,always,,
+Company,6,Funding,ipo_date,DATE,B,N,Y,Y,append_if_null,,
+Company,7,Financials,revenue_from_operations,NUMERIC,A,N,Y,Y,always,,
+Company,7,Financials,total_revenue,NUMERIC,A,N,Y,Y,always,,
+Company,7,Financials,revenue_year,INTEGER,B,N,Y,Y,always,,Year of reported revenue
+Company,7,Financials,profit_loss_for_the_period,NUMERIC,A,N,Y,Y,always,,
+Company,7,Financials,is_profitable,BOOL,A,N,Y,Y,always,,
+Company,7,Financials,ebitda_inr,NUMERIC,B,N,Y,Y,always,,
+Company,7,Financials,monthly_visits,INTEGER,A,N,Y,Y,always,,Website traffic
+Company,8,People,founders,ARRAY,B,N,Y,Y,always,,Named founders from Datalabs
+Company,8,People,founders_count,INTEGER,B,N,Y,Y,always,,
+Company,8,People,key_executives,ARRAY,B,N,Y,N,always,,C-suite list
+Company,9,Inc42Tags,tags,STRING,A,N,Y,Y,always,,Datalabs internal tags
+Company,9,Inc42Tags,inc42_tags,STRING,A,N,Y,Y,always,,Inc42 taxonomy concat
+Company,9,Inc42Tags,is_unicorn,BOOL,A,N,Y,Y,always,,
+Company,9,Inc42Tags,is_soonicorn,BOOL,A,N,Y,Y,always,,
+Company,9,Inc42Tags,is_minicorn,BOOL,A,N,Y,Y,always,,
+Company,9,Inc42Tags,is_fast42_winner,BOOL,A,N,Y,Y,always,,
+Company,9,Inc42Tags,is_30_startups_to_watch,BOOL,A,N,Y,Y,always,,
+Company,9,Inc42Tags,is_startup_watchlist,BOOL,A,N,Y,Y,always,,
+Company,9,Inc42Tags,is_inc42_upnext,BOOL,A,N,Y,Y,always,,
+Company,9,Inc42Tags,is_tracked,BOOL,A,N,Y,Y,always,,Datalabs coverage
+Company,10,Inc42Relationship,is_target_account,BOOL,C,N,Y,Y,always,,Sales-maintained list
+Company,10,Inc42Relationship,is_sponsor,BOOL,B,N,Y,N,always,,Has sponsored Inc42 events
+Company,10,Inc42Relationship,is_inc42_covered,BOOL,B,N,Y,Y,always,,Appears in editorial / research
+Company,10,Inc42Relationship,first_inc42_mention_at,TIMESTAMP,B,N,Y,N,always,,
+Company,11,EmployeeRollups,contacts_in_warehouse,INTEGER,A,N,Y,Y,always,,Existing count
+Company,11,EmployeeRollups,unique_contacts,INTEGER,A,N,Y,Y,always,,Existing
+Company,11,EmployeeRollups,inc42_plus_members_count,INTEGER,B,N,Y,Y,always,,Plus members from this company
+Company,11,EmployeeRollups,has_plus_member,BOOL,B,N,Y,Y,always,,
+Company,11,EmployeeRollups,decision_maker_captured,BOOL,B,N,Y,Y,always,,At least one C-level/VP/Founder contact
+Company,11,EmployeeRollups,leadership_reach_pct,NUMERIC,B,N,Y,Y,always,,% of named C-suite covered
+Company,11,EmployeeRollups,first_engagement_at,TIMESTAMP,B,N,Y,Y,always,,Company-level earliest touch
+Company,11,EmployeeRollups,last_employee_engagement_at,TIMESTAMP,B,N,Y,Y,always,,
+Company,12,CompanyEngagement,total_orders_from_company,INTEGER,A,N,Y,Y,always,,Existing
+Company,12,CompanyEngagement,total_revenue_from_company,NUMERIC,A,N,Y,Y,always,,Existing
+Company,12,CompanyEngagement,events_attended_by_company_lifetime,INTEGER,B,N,Y,Y,always,,
+Company,12,CompanyEngagement,newsletters_reach_count,INTEGER,B,N,Y,Y,always,,Distinct employees subscribed
+Company,12,CompanyEngagement,company_engagement_score,NUMERIC,B,N,Y,Y,always,,Rollup
+Company,12,CompanyEngagement,company_engagement_tier,ENUM,B,N,Y,Y,always,,low / mid / high
+Company,13,FundingDerived,years_since_last_funding,NUMERIC,B,N,Y,Y,always,,
+Company,13,FundingDerived,funding_velocity_months,NUMERIC,B,N,Y,Y,always,,Avg months between rounds
+Company,13,FundingDerived,is_well_funded,BOOL,B,N,Y,Y,always,,Series B+ or >50Cr
+Company,13,FundingDerived,valuation_inr,NUMERIC,B,N,Y,Y,always,,Latest known
+Company,13,FundingDerived,valuation_bucket,ENUM,B,N,Y,Y,always,,
+Company,13,FundingDerived,fundraising_momentum,ENUM,B,N,Y,Y,always,,raising / raised_recently / stale
+Company,14,FinancialsDerived,revenue_bucket,ENUM,B,N,Y,Y,always,,<1Cr / 1-10Cr / 10-100Cr / 100-1000Cr / 1000Cr+
+Company,14,FinancialsDerived,profitability_status,ENUM,B,N,Y,Y,always,,profitable / breakeven / loss-making / unknown
+Company,14,FinancialsDerived,revenue_growth_yoy_pct,NUMERIC,B,N,Y,Y,always,,
+Company,15,LifecycleDerived,years_since_founded,NUMERIC,B,N,Y,Y,always,,
+Company,15,LifecycleDerived,lifecycle_stage,ENUM,B,N,Y,Y,always,,early / growth / mature / public / exited
+Company,15,LifecycleDerived,stage_trajectory,ENUM,C,N,Y,N,always,,Needs trajectory model
+Company,16,CoverageDerived,coverage_mentions_lifetime,INTEGER,C,N,Y,N,always,,Needs editorial CMS ingestion
+Company,16,CoverageDerived,coverage_mentions_90d,INTEGER,C,N,Y,N,always,,
+Company,16,CoverageDerived,last_mentioned_at,TIMESTAMP,C,N,Y,N,always,,
+Company,16,CoverageDerived,is_inc42_tagged_trending,BOOL,C,N,Y,N,always,,Mention velocity spike
+Company,17,ABM,account_priority_tier,ENUM,C,N,Y,Y,always,,A / B / C sales-set
+Company,17,ABM,account_status,ENUM,B,N,Y,Y,always,,prospect / engaged / customer / dormant
+Company,17,ABM,sales_readiness_score,NUMERIC,B,N,Y,Y,always,,
+Company,17,ABM,is_at_risk,BOOL,B,N,Y,Y,always,,Funding stale + low engagement
+Company,18,RiskSignals,is_layoffs_reported,BOOL,C,N,Y,Y,always,,Needs news signal ingestion
+Company,18,RiskSignals,has_recent_leadership_change,BOOL,C,N,Y,Y,always,,Needs news signal
+Company,18,RiskSignals,sentiment_score,NUMERIC,C,N,Y,N,always,,Needs NLP on coverage
