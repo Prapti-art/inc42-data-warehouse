@@ -60,6 +60,9 @@ OBJECTS = {
     "contacts": {
         "table": f"{BQ_PROJECT}.{BQ_DATASET}.hubspot_contacts",
         "endpoint": "/crm/v3/objects/contacts/search",
+        # Contacts use `lastmodifieddate` (no hs_ prefix) for the modified-date filter.
+        # Companies and deals use `hs_lastmodifieddate`. HubSpot inconsistency.
+        "modified_date_property": "lastmodifieddate",
         "properties": [
             "email", "firstname", "lastname", "phone", "mobilephone",
             "jobtitle", "company", "industry", "city", "state", "country",
@@ -89,12 +92,13 @@ OBJECTS = {
             ("hubspot_owner_id", "owner_id", "STRING"),
             ("unified_contact_id", "unified_contact_id", "STRING"),
             ("createdate", "created_at", "TIMESTAMP"),
-            ("hs_lastmodifieddate", "modified_at", "TIMESTAMP"),
+            ("lastmodifieddate", "modified_at", "TIMESTAMP"),
         ],
     },
     "companies": {
         "table": f"{BQ_PROJECT}.{BQ_DATASET}.hubspot_companies",
         "endpoint": "/crm/v3/objects/companies/search",
+        "modified_date_property": "hs_lastmodifieddate",
         "properties": [
             "name", "domain", "industry", "numberofemployees", "annualrevenue",
             "city", "state", "country", "founded_year",
@@ -123,6 +127,7 @@ OBJECTS = {
     "deals": {
         "table": f"{BQ_PROJECT}.{BQ_DATASET}.hubspot_deals",
         "endpoint": "/crm/v3/objects/deals/search",
+        "modified_date_property": "hs_lastmodifieddate",
         "properties": [
             "dealname", "amount", "pipeline", "dealstage", "closedate",
             "createdate", "hs_lastmodifieddate", "hs_object_id",
@@ -235,15 +240,16 @@ def fetch_objects(object_name, cfg, since_dt):
 
     while True:
         page += 1
+        modified_prop = cfg["modified_date_property"]
         body = {
             "filterGroups": [{
                 "filters": [{
-                    "propertyName": "hs_lastmodifieddate",
+                    "propertyName": modified_prop,
                     "operator": "GTE",
                     "value": str(since_ms),
                 }]
             }],
-            "sorts": [{"propertyName": "hs_lastmodifieddate", "direction": "ASCENDING"}],
+            "sorts": [{"propertyName": modified_prop, "direction": "ASCENDING"}],
             "properties": cfg["properties"],
             "limit": 100,
         }
@@ -325,9 +331,23 @@ def load_bronze(object_name, cfg, rows):
             df[col_name] = pd.to_datetime(df[col_name], errors="coerce", utc=True)
     df["_ingested_at"] = pd.to_datetime(df["_ingested_at"], errors="coerce", utc=True)
 
+    # Explicit schema prevents pandas type inference from flipping all-null
+    # string columns to INTEGER and mismatching the Bronze table.
+    schema = [
+        bigquery.SchemaField(col_name, col_type)
+        for _, col_name, col_type in cfg["flat_columns"]
+    ] + [
+        bigquery.SchemaField("properties_json", "STRING"),
+        bigquery.SchemaField("associations_json", "STRING"),
+        bigquery.SchemaField("archived", "BOOLEAN"),
+        bigquery.SchemaField("_ingested_at", "TIMESTAMP"),
+        bigquery.SchemaField("_source", "STRING"),
+        bigquery.SchemaField("_ingestion_id", "STRING"),
+    ]
+
     job_config = bigquery.LoadJobConfig(
         write_disposition="WRITE_APPEND",
-        schema_update_options=["ALLOW_FIELD_ADDITION"],
+        schema=schema,
     )
     job = bq.load_table_from_dataframe(df, cfg["table"], job_config=job_config)
     job.result()
