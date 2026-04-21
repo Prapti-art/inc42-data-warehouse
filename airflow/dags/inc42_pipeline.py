@@ -100,8 +100,12 @@ with DAG(
         doc="Load 30 Datalabs tables from PostgreSQL → bronze.dl_*",
     )
 
-    # Future:
-    # ingest_hubspot = BashOperator(...)
+    # HubSpot: contacts, companies, deals via CRM v3 API (incremental by hs_lastmodifieddate)
+    ingest_hubspot = BashOperator(
+        task_id="load_hubspot",
+        bash_command=f"python {PROJECT_DIR}/ingestion/scripts/hubspot_ingest.py",
+        doc="Fetch HubSpot contacts/companies/deals via CRM v3 → bronze.hubspot_*",
+    )
 
     # ════════════════════════════════════════════
     #  PHASE 2: PYSPARK (after ingestion)
@@ -154,7 +158,7 @@ with DAG(
     # Phase 1: All ingestion runs in parallel
     # Phase 2: PySpark runs after ALL ingestion completes
     # Phase 1 → Phase 2 → Phase 3
-    [ingest_bronze, ingest_customerio, ingest_tally, ingest_inc42_db, ingest_gravity, ingest_woocommerce, ingest_datalabs] >> spark_identity
+    [ingest_bronze, ingest_customerio, ingest_tally, ingest_inc42_db, ingest_gravity, ingest_woocommerce, ingest_datalabs, ingest_hubspot] >> spark_identity
     spark_identity >> dbt_run >> dbt_test
 
     # Future:
