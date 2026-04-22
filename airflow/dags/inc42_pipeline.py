@@ -104,6 +104,8 @@ with DAG(
     ingest_hubspot = BashOperator(
         task_id="load_hubspot",
         bash_command=f"python {PROJECT_DIR}/ingestion/scripts/hubspot_ingest.py",
+        env={"HUBSPOT_PRIVATE_APP_TOKEN": "{{ var.value.HUBSPOT_PRIVATE_APP_TOKEN }}"},
+        append_env=True,
         doc="Fetch HubSpot contacts/companies/deals via CRM v3 → bronze.hubspot_*",
     )
 
