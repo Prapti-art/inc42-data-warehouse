@@ -179,6 +179,32 @@ gravity_form88 AS (
         GROUP BY e.id, e.date_created
     )
     WHERE rn = 1 AND email IS NOT NULL AND email LIKE '%@%'
+),
+
+-- ── HubSpot CRM: contacts from sales pipeline (deduped in silver.hubspot_contacts_latest) ──
+hubspot AS (
+    SELECT
+        email,
+        hubspot_contact_id,
+        first_name,
+        last_name,
+        phone_e164 AS phone,
+        company_name,
+        job_title AS designation,
+        linkedin_url,
+        city,
+        state,
+        country,
+        lifecycle_stage,
+        lead_status,
+        lead_source,
+        hubspot_score,
+        hubspot_owner_id,
+        associated_company_ids,
+        hubspot_created_at,
+        hubspot_modified_at
+    FROM {{ ref('hubspot_contacts_latest') }}
+    WHERE email IS NOT NULL AND email LIKE '%@%'
 )
 
 SELECT
@@ -211,7 +237,8 @@ SELECT
     COALESCE(
         NULLIF(i.company_name, ''), NULLIF(c.company_name, ''),
         NULLIF(w.company_name, ''), NULLIF(t.company_name, ''),
-        NULLIF(gf.company_name, ''), u.primary_company
+        NULLIF(gf.company_name, ''), NULLIF(h.company_name, ''),
+        u.primary_company
     ) AS company_name,
     NULLIF(c.company_website, '') AS company_website,
 
@@ -219,7 +246,7 @@ SELECT
     COALESCE(
         NULLIF(i.designation, ''), NULLIF(i.user_designation, ''),
         NULLIF(i.working_designation, ''), NULLIF(c.designation, ''),
-        NULLIF(t.designation, '')
+        NULLIF(t.designation, ''), NULLIF(h.designation, '')
     ) AS designation,
 
     -- ═══ SENIORITY ═══ (Inc42 108K > CIO 19K > GF88 87K > WooCommerce > Tally)
@@ -234,15 +261,16 @@ SELECT
         NULLIF(gf.industry, ''), NULLIF(t.sector, '')
     ) AS industry,
 
-    -- ═══ LINKEDIN ═══ (Inc42 24K > CIO 1.7K > Tally)
+    -- ═══ LINKEDIN ═══ (Inc42 24K > CIO 1.7K > Tally > HubSpot)
     COALESCE(
-        NULLIF(i.linkedin_url, ''), NULLIF(c.linkedin_url, ''), NULLIF(t.linkedin_url, '')
+        NULLIF(i.linkedin_url, ''), NULLIF(c.linkedin_url, ''),
+        NULLIF(t.linkedin_url, ''), NULLIF(h.linkedin_url, '')
     ) AS linkedin_url,
 
     -- ═══ LOCATION ═══
-    COALESCE(NULLIF(i.city, ''), NULLIF(c.city, ''), NULLIF(w.city, ''), NULLIF(t.city, '')) AS city,
-    COALESCE(NULLIF(i.state, ''), NULLIF(c.region, ''), NULLIF(w.state, '')) AS state,
-    COALESCE(NULLIF(i.country, ''), NULLIF(c.country, ''), NULLIF(w.country, '')) AS country,
+    COALESCE(NULLIF(i.city, ''), NULLIF(c.city, ''), NULLIF(w.city, ''), NULLIF(t.city, ''), NULLIF(h.city, '')) AS city,
+    COALESCE(NULLIF(i.state, ''), NULLIF(c.region, ''), NULLIF(w.state, ''), NULLIF(h.state, '')) AS state,
+    COALESCE(NULLIF(i.country, ''), NULLIF(c.country, ''), NULLIF(w.country, ''), NULLIF(h.country, '')) AS country,
     COALESCE(NULLIF(i.postcode, ''), NULLIF(c.postal_code, ''), NULLIF(w.postcode, '')) AS postcode,
     COALESCE(NULLIF(i.address, ''), NULLIF(w.address, '')) AS address,
     c.timezone,
@@ -304,6 +332,17 @@ SELECT
     -- ═══ NEWSLETTER CONSENT ═══
     i.allow_newsletter AS inc42_newsletter_consent,
 
+    -- ═══ HUBSPOT (sales pipeline) ═══
+    h.hubspot_contact_id,
+    h.lifecycle_stage AS hubspot_lifecycle_stage,
+    h.lead_status AS hubspot_lead_status,
+    h.lead_source AS hubspot_lead_source,
+    h.hubspot_score,
+    h.hubspot_owner_id,
+    h.associated_company_ids AS hubspot_associated_company_ids,
+    h.hubspot_created_at,
+    h.hubspot_modified_at,
+
     -- ═══ SOURCE COVERAGE ═══
     u.source_count,
     u.found_in_systems,
@@ -343,6 +382,7 @@ LEFT JOIN customerio c ON u.primary_email = c.email
 LEFT JOIN woo w ON u.primary_email = w.email
 LEFT JOIN tally t ON u.primary_email = t.email
 LEFT JOIN gravity_form88 gf ON u.primary_email = gf.email
+LEFT JOIN hubspot h ON u.primary_email = h.email
 
 -- Exclude test/junk contacts
 WHERE u.primary_email IS NOT NULL

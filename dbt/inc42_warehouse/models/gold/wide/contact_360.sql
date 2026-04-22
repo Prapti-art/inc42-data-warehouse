@@ -401,6 +401,17 @@ SELECT
     c.country,
     c.user_type,
 
+    -- ═══ HUBSPOT (sales pipeline) ═══
+    c.hubspot_contact_id,
+    c.hubspot_lifecycle_stage,
+    c.hubspot_lead_status,
+    c.hubspot_lead_source,
+    c.hubspot_score,
+    c.hubspot_owner_id,
+    c.hubspot_associated_company_ids,
+    c.hubspot_created_at,
+    c.hubspot_modified_at,
+
     -- ═══ DATALABS PERSON (via LinkedIn match) ═══
     pm.person_uuid AS dl_person_id,
     pm.dl_person_description,

@@ -129,6 +129,14 @@ SELECT
     COALESCE(cor.total_orders, 0) AS total_orders_from_company,
     COALESCE(cor.total_revenue, 0) AS total_revenue_from_company,
 
+    -- HubSpot (sales pipeline, matched by normalized name)
+    hco.hubspot_company_id,
+    hco.lifecycle_stage AS hubspot_lifecycle_stage,
+    hco.company_type AS hubspot_company_type,
+    hco.hubspot_owner_id,
+    hco.hubspot_created_at AS hubspot_created_at,
+    hco.hubspot_modified_at AS hubspot_modified_at,
+
     CURRENT_TIMESTAMP() AS updated_at
 
 FROM company co
@@ -137,3 +145,4 @@ LEFT JOIN inc42_tags it ON co.company_id = it.company_uuid
 LEFT JOIN investors inv ON co.company_id = inv.company_uuid
 LEFT JOIN inc42_contacts ic ON LOWER(TRIM(co.company_name)) = ic.company_name_lower
 LEFT JOIN company_orders cor ON LOWER(TRIM(co.company_name)) = cor.company_name_lower
+LEFT JOIN {{ ref('hubspot_companies_latest') }} hco ON LOWER(TRIM(co.company_name)) = hco.name_lower

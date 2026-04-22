@@ -34,6 +34,11 @@ sources:
       # Tally (API)
       - name: tally_forms
 
+      # HubSpot CRM v3 (API)
+      - name: hubspot_contacts
+      - name: hubspot_companies
+      - name: hubspot_deals
+
       # Datalabs (PostgreSQL)
       - name: dl_company_table
       - name: dl_funding_table

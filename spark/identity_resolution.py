@@ -231,12 +231,33 @@ gf_count = gravity.count() if gravity else 0
 print(f"    ✓ {gf_count:,} contacts")
 
 
+# ── HubSpot: already deduped and normalized in silver.hubspot_contacts_latest ──
+print("  Loading HubSpot contacts...")
+hubspot = read_bq("""
+    SELECT
+        'hubspot' AS source_system,
+        hubspot_contact_id AS source_id,
+        email,
+        first_name,
+        last_name,
+        phone_raw AS raw_phone,
+        company_name,
+        job_title AS designation,
+        city,
+        linkedin_url
+    FROM silver.hubspot_contacts_latest
+    WHERE email IS NOT NULL AND email LIKE '%@%'
+""")
+hubspot_count = hubspot.count() if hubspot else 0
+print(f"    ✓ {hubspot_count:,} contacts")
+
+
 # ══════════════════════════════════════════════════════════
 #  STEP 2: UNION ALL SOURCES
 # ══════════════════════════════════════════════════════════
 print(f"\n📊 Step 2: Combining all sources...")
 
-sources = [df for df in [inc42, customerio, tally, woo, gravity] if df is not None]
+sources = [df for df in [inc42, customerio, tally, woo, gravity, hubspot] if df is not None]
 all_contacts = sources[0]
 for df in sources[1:]:
     all_contacts = all_contacts.unionByName(df, allowMissingColumns=True)
@@ -455,6 +476,7 @@ Sources:
   Tally:          {tally_count:>10,} records
   WooCommerce:    {woo_count:>10,} records
   Gravity Forms:  {gf_count:>10,} records
+  HubSpot:        {hubspot_count:>10,} records
   ─────────────────────────────
   Total input:    {total:>10,} records
 

@@ -12,6 +12,30 @@ models:
         tests:
           - not_null
 
+  - name: hubspot_contacts_latest
+    description: "Silver: one row per HubSpot contact (latest by modified_at), with normalized email/phone/linkedin and associated company ids flattened"
+    columns:
+      - name: hubspot_contact_id
+        tests:
+          - unique
+          - not_null
+
+  - name: hubspot_companies_latest
+    description: "Silver: one row per HubSpot company (latest by modified_at)"
+    columns:
+      - name: hubspot_company_id
+        tests:
+          - unique
+          - not_null
+
+  - name: hubspot_deals_latest
+    description: "Silver: one row per HubSpot deal (latest by modified_at), with associated contact and company ids flattened"
+    columns:
+      - name: hubspot_deal_id
+        tests:
+          - unique
+          - not_null
+
   - name: dim_contact
     description: "Gold dimension: master contact"
     columns:
@@ -25,6 +49,14 @@ models:
     columns:
       - name: order_id
         tests:
+          - not_null
+
+  - name: fact_hubspot_deals
+    description: "Gold fact: one row per HubSpot deal with primary contact_key / company_key resolved"
+    columns:
+      - name: hubspot_deal_id
+        tests:
+          - unique
           - not_null
 
   - name: fact_form_submissions
