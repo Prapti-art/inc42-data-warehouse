@@ -230,55 +230,107 @@ def ensure_bronze_table(object_name, cfg):
 # ══════════════════════════════════════════════════════════════
 # Fetch (paginated search with hs_lastmodifieddate filter)
 # ══════════════════════════════════════════════════════════════
+# HubSpot search caps at 10K results per query. At ~9.5K we restart the
+# search with a fresh `since` = max(modified_at) of the batch so far —
+# keyset pagination.
+SEARCH_CAP = 9500
+
+
+def _extract_modified_ms(obj, modified_prop):
+    val = obj.get("properties", {}).get(modified_prop)
+    if not val:
+        return None
+    if isinstance(val, str) and "T" in val:
+        try:
+            return int(datetime.fromisoformat(val.replace("Z", "+00:00")).timestamp() * 1000)
+        except ValueError:
+            return None
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return None
+
+
 def fetch_objects(object_name, cfg, since_dt):
+    modified_prop = cfg["modified_date_property"]
     since_ms = int(since_dt.timestamp() * 1000)
     print(f"  📥 Fetching {object_name} modified since {since_dt.isoformat()}")
 
     results = []
-    after = None
-    page = 0
+    batch_total = 0
+    window_num = 0
 
     while True:
-        page += 1
-        modified_prop = cfg["modified_date_property"]
-        body = {
-            "filterGroups": [{
-                "filters": [{
-                    "propertyName": modified_prop,
-                    "operator": "GTE",
-                    "value": str(since_ms),
-                }]
-            }],
-            "sorts": [{"propertyName": modified_prop, "direction": "ASCENDING"}],
-            "properties": cfg["properties"],
-            "limit": 100,
-        }
-        if after:
-            body["after"] = after
+        window_num += 1
+        window_start_ms = since_ms
+        window_results = []
+        after = None
+        page = 0
 
-        resp = requests.post(f"{HS_BASE}{cfg['endpoint']}", headers=HEADERS, json=body)
+        while True:
+            page += 1
+            body = {
+                "filterGroups": [{
+                    "filters": [{
+                        "propertyName": modified_prop,
+                        "operator": "GTE",
+                        "value": str(window_start_ms),
+                    }]
+                }],
+                "sorts": [{"propertyName": modified_prop, "direction": "ASCENDING"}],
+                "properties": cfg["properties"],
+                "limit": 100,
+            }
+            if after:
+                body["after"] = after
 
-        if resp.status_code == 429:
-            retry = int(resp.headers.get("Retry-After", "10"))
-            print(f"    ⏳ Rate limited, sleeping {retry}s")
-            time.sleep(retry)
-            continue
+            resp = requests.post(f"{HS_BASE}{cfg['endpoint']}", headers=HEADERS, json=body)
 
-        resp.raise_for_status()
-        data = resp.json()
+            if resp.status_code == 429:
+                retry = int(resp.headers.get("Retry-After", "10"))
+                print(f"    ⏳ Rate limited, sleeping {retry}s")
+                time.sleep(retry)
+                continue
 
-        batch = data.get("results", [])
-        results.extend(batch)
-        print(f"    page {page}: +{len(batch)} (total {len(results)})")
+            resp.raise_for_status()
+            data = resp.json()
 
-        paging = data.get("paging", {}).get("next")
-        if not paging:
+            batch = data.get("results", [])
+            window_results.extend(batch)
+            batch_total += len(batch)
+
+            if page % 10 == 0 or not data.get("paging"):
+                print(f"    window {window_num} page {page}: +{len(batch)} (window {len(window_results)}, total {batch_total})")
+
+            # Hit search cap — restart with new since = max modified of current window
+            if len(window_results) >= SEARCH_CAP:
+                break
+
+            paging = data.get("paging", {}).get("next")
+            if not paging:
+                break
+            after = paging.get("after")
+            if not after:
+                break
+
+            time.sleep(THROTTLE_SECONDS)
+
+        results.extend(window_results)
+
+        # If this window filled the cap, advance since to max modified and continue.
+        # Otherwise we're done.
+        if len(window_results) < SEARCH_CAP:
             break
-        after = paging.get("after")
-        if not after:
-            break
 
-        time.sleep(THROTTLE_SECONDS)
+        max_ms = max(
+            (_extract_modified_ms(o, modified_prop) or 0 for o in window_results),
+            default=0,
+        )
+        if max_ms <= since_ms:
+            print(f"    ⚠️  can't advance cursor ({max_ms} <= {since_ms}); stopping")
+            break
+        # +1ms so we don't re-fetch the boundary row on next window
+        since_ms = max_ms + 1
 
     print(f"  ✓ Fetched {len(results)} {object_name}")
     return results
