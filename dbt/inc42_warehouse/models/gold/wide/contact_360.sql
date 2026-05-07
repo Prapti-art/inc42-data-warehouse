@@ -240,7 +240,17 @@ orders AS (
         SUM(is_cancelled) AS total_cancelled_orders,
         MAX(order_date_key) AS last_order_date_key,
         COUNTIF(product_type = 'membership') AS total_membership_orders,
-        COUNTIF(product_type = 'addon') AS total_addon_orders
+        COUNTIF(product_type = 'addon') AS total_addon_orders,
+        -- Revenue split by product_type
+        SUM(CASE WHEN product_type = 'membership' AND is_completed = 1 THEN net_revenue ELSE 0 END) AS total_membership_revenue,
+        -- Event-ticket aggregations (fed by bronze.woo_events_historical)
+        COUNTIF(product_type = 'event') AS total_event_orders,
+        SUM(CASE WHEN product_type = 'event' AND is_completed = 1 THEN net_revenue ELSE 0 END) AS total_event_revenue,
+        SUM(CASE WHEN product_type = 'event' AND (is_refunded = 1 OR COALESCE(refund_total, 0) > 0)
+                 THEN COALESCE(refund_total, net_revenue) ELSE 0 END) AS total_event_refunds,
+        STRING_AGG(DISTINCT CASE WHEN product_type = 'event' AND is_completed = 1 THEN pass_type END, ', ') AS event_passes_purchased,
+        STRING_AGG(DISTINCT CASE WHEN product_type = 'event' AND is_completed = 1 THEN product_name END, ', ') AS event_names_purchased,
+        MAX(CASE WHEN is_completed = 1 THEN order_date_key END) AS last_completed_order_date_key
     FROM {{ ref('fact_orders') }}
     GROUP BY contact_key
 ),
@@ -486,6 +496,15 @@ SELECT
     COALESCE(o.total_cancelled_orders, 0) AS total_cancelled_orders,
     COALESCE(o.total_membership_orders, 0) AS total_membership_orders,
     COALESCE(o.total_addon_orders, 0) AS total_addon_orders,
+    COALESCE(o.total_membership_revenue, 0) AS total_membership_revenue,
+
+    -- ═══ EVENT TICKETS (from bronze.woo_events_historical) ═══
+    COALESCE(o.total_event_orders, 0) AS total_event_orders,
+    COALESCE(o.total_event_revenue, 0) AS total_event_revenue,
+    COALESCE(o.total_event_refunds, 0) AS total_event_refunds,
+    o.event_passes_purchased,
+    o.event_names_purchased,
+    SAFE.PARSE_DATE('%Y%m%d', CAST(o.last_completed_order_date_key AS STRING)) AS last_purchase_date,
 
     -- ═══ EVENTS ═══
     COALESCE(ev.total_events_registered, 0) AS total_events_registered,

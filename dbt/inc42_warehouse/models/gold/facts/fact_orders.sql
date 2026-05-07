@@ -1,5 +1,11 @@
--- Gold fact_orders: one row per order item, linked to dim_contact via contact_key
--- Includes normalized product name, product type, and membership duration
+-- Gold fact_orders: one row per order item, linked to dim_contact via contact_key.
+-- Includes normalized product name, product type, membership duration, and
+-- (for event tickets) pass_type + line-item refund_total.
+--
+-- Sources:
+--   1. WooCommerce live  (bronze.woocommerce_orders + meta + items)
+--   2. WooCommerce events historical backfill (bronze.woo_events_historical)
+--      — D2C / GenAI / Fintech / Startup Leaders ticket sales, one-time CSV ingest
 
 WITH order_meta_pivoted AS (
     SELECT
@@ -19,7 +25,6 @@ WITH order_meta_pivoted AS (
     GROUP BY m.post_id
 ),
 
--- Get product/event names from order items
 order_items AS (
     SELECT
         oi.order_item_id,
@@ -30,7 +35,6 @@ order_items AS (
     WHERE oi.order_item_type = 'line_item'
 ),
 
--- Normalize product names
 normalized_items AS (
     SELECT
         order_item_id,
@@ -52,6 +56,18 @@ normalized_items AS (
             WHEN LOWER(raw_product_name) LIKE '%inc42 plus%' OR raw_product_name = 'Inc42 Plus' THEN 'membership'
             WHEN LOWER(raw_product_name) LIKE '%datalabs pro%' THEN 'membership'
             WHEN LOWER(raw_product_name) LIKE '%addon%' OR LOWER(raw_product_name) LIKE '%topup%' THEN 'addon'
+            -- Event tickets (Apr 2026 — backfill via bronze.woo_events_historical)
+            WHEN LOWER(raw_product_name) LIKE '%d2c summit%' THEN 'event'
+            WHEN LOWER(raw_product_name) LIKE '%genai summit%' THEN 'event'
+            WHEN LOWER(raw_product_name) LIKE '%fintech summit%' THEN 'event'
+            WHEN LOWER(raw_product_name) LIKE '%startup leaders pass%' THEN 'event'
+            WHEN LOWER(raw_product_name) LIKE '%enabler pass%' THEN 'event'
+            WHEN LOWER(raw_product_name) LIKE '%investor pass%' THEN 'event'
+            WHEN LOWER(raw_product_name) LIKE '%select pass%' THEN 'event'
+            WHEN LOWER(raw_product_name) LIKE '%all access%' THEN 'event'
+            WHEN LOWER(raw_product_name) LIKE '%growth pass%' THEN 'event'
+            WHEN LOWER(raw_product_name) LIKE '%transfer pass%' THEN 'event'
+            WHEN LOWER(raw_product_name) LIKE '%summit + workshop%' THEN 'event'
             WHEN LOWER(raw_product_name) LIKE '%test%' THEN 'test'
             WHEN raw_product_name IS NULL OR TRIM(raw_product_name) = '' THEN 'unknown'
             ELSE 'other'
@@ -82,28 +98,82 @@ orders AS (
         om.payment_method, om.currency
     FROM {{ source('bronze', 'woocommerce_orders') }} o
     LEFT JOIN order_meta_pivoted om ON o.ID = om.order_id
+),
+
+-- Live WooCommerce orders (memberships, addons, anything not in historical events backfill)
+live_orders AS (
+    SELECT
+        ni.order_item_id,
+        o.order_id,
+        dc.contact_key,
+        CAST(FORMAT_DATE('%Y%m%d', DATE(o.order_date)) AS INT64) AS order_date_key,
+        o.order_status,
+        ni.raw_product_name,
+        ni.product_name,
+        ni.product_type,
+        ni.membership_duration,
+        CAST(NULL AS STRING) AS pass_type,
+        o.order_total, o.tax_total, o.discount_amount,
+        GREATEST(o.order_total - o.discount_amount, 0) AS net_revenue,
+        CAST(NULL AS NUMERIC) AS refund_total,
+        o.payment_method, o.currency,
+        o.billing_company, o.billing_city, o.billing_state, o.billing_country, o.billing_gst,
+        CASE WHEN o.order_status = 'wc-completed' THEN 1 ELSE 0 END AS is_completed,
+        CASE WHEN o.order_status = 'wc-refunded' THEN 1 ELSE 0 END AS is_refunded,
+        CASE WHEN o.order_status = 'wc-cancelled' THEN 1 ELSE 0 END AS is_cancelled,
+        CASE WHEN o.order_status IN ('wc-processing', 'wc-completed') THEN 1 ELSE 0 END AS is_successful
+    FROM normalized_items ni
+    JOIN orders o ON ni.order_id = o.order_id
+    LEFT JOIN {{ ref('dim_contact') }} dc ON o.email = dc.email
+    WHERE ni.product_type != 'test'
+      AND ni.product_name != 'Unknown'
+      AND LOWER(COALESCE(o.email, '')) NOT LIKE '%@inc42.com'
+      AND LOWER(COALESCE(o.email, '')) NOT LIKE '%test%'
+),
+
+-- Historical event-ticket orders (one-time CSV backfill — Apr 2026)
+historical_events AS (
+    SELECT
+        CAST(NULL AS INT64) AS order_item_id,
+        h.order_id,
+        dc.contact_key,
+        CAST(FORMAT_DATE('%Y%m%d', DATE(h.order_date)) AS INT64) AS order_date_key,
+        h.order_status,
+        h.product_name AS raw_product_name,
+        h.product_name,
+        CASE
+            WHEN LOWER(h.product_name) LIKE '%d2c summit%' THEN 'event'
+            WHEN LOWER(h.product_name) LIKE '%genai summit%' THEN 'event'
+            WHEN LOWER(h.product_name) LIKE '%fintech summit%' THEN 'event'
+            WHEN LOWER(h.product_name) LIKE '%startup leaders pass%' THEN 'event'
+            WHEN LOWER(h.product_name) LIKE '%enabler pass%' THEN 'event'
+            WHEN LOWER(h.product_name) LIKE '%investor pass%' THEN 'event'
+            WHEN LOWER(h.product_name) LIKE '%select pass%' THEN 'event'
+            WHEN LOWER(h.product_name) LIKE '%all access%' THEN 'event'
+            WHEN LOWER(h.product_name) LIKE '%growth pass%' THEN 'event'
+            WHEN LOWER(h.product_name) LIKE '%transfer pass%' THEN 'event'
+            WHEN LOWER(h.product_name) LIKE '%summit + workshop%' THEN 'event'
+            ELSE 'other'
+        END AS product_type,
+        CAST(NULL AS STRING) AS membership_duration,
+        h.pass_type,
+        COALESCE(h.order_total, 0) AS order_total,
+        CAST(NULL AS NUMERIC) AS tax_total,
+        COALESCE(h.discount_amount, 0) AS discount_amount,
+        GREATEST(COALESCE(h.order_total, 0) - COALESCE(h.discount_amount, 0), 0) AS net_revenue,
+        COALESCE(h.refund_total, 0) AS refund_total,
+        h.payment_method, h.currency,
+        h.billing_company, h.billing_city, h.billing_state, h.billing_country,
+        CAST(NULL AS STRING) AS billing_gst,
+        CASE WHEN h.order_status = 'wc-completed' THEN 1 ELSE 0 END AS is_completed,
+        CASE WHEN h.order_status = 'wc-refunded' OR COALESCE(h.refund_total, 0) > 0 THEN 1 ELSE 0 END AS is_refunded,
+        CASE WHEN h.order_status = 'wc-cancelled' THEN 1 ELSE 0 END AS is_cancelled,
+        CASE WHEN h.order_status IN ('wc-processing', 'wc-completed') THEN 1 ELSE 0 END AS is_successful
+    FROM {{ source('bronze', 'woo_events_historical') }} h
+    LEFT JOIN {{ ref('dim_contact') }} dc ON LOWER(TRIM(h.billing_email)) = LOWER(TRIM(dc.email))
+    WHERE LOWER(COALESCE(h.billing_email, '')) NOT LIKE '%@inc42.com'
 )
 
-SELECT
-    ni.order_item_id,
-    o.order_id,
-    dc.contact_key,
-    CAST(FORMAT_DATE('%Y%m%d', DATE(o.order_date)) AS INT64) AS order_date_key,
-    o.order_status,
-    ni.raw_product_name, ni.product_name, ni.product_type, ni.membership_duration,
-    o.order_total, o.tax_total, o.discount_amount,
-    GREATEST(o.order_total - o.discount_amount, 0) AS net_revenue,
-    o.payment_method, o.currency,
-    o.billing_company, o.billing_city, o.billing_state, o.billing_country, o.billing_gst,
-    CASE WHEN o.order_status = 'wc-completed' THEN 1 ELSE 0 END AS is_completed,
-    CASE WHEN o.order_status = 'wc-refunded' THEN 1 ELSE 0 END AS is_refunded,
-    CASE WHEN o.order_status = 'wc-cancelled' THEN 1 ELSE 0 END AS is_cancelled,
-    CASE WHEN o.order_status IN ('wc-processing', 'wc-completed') THEN 1 ELSE 0 END AS is_successful
-
-FROM normalized_items ni
-JOIN orders o ON ni.order_id = o.order_id
-LEFT JOIN {{ ref('dim_contact') }} dc ON o.email = dc.email
-WHERE ni.product_type != 'test'
-  AND ni.product_name != 'Unknown'
-  AND LOWER(COALESCE(o.email, '')) NOT LIKE '%@inc42.com'
-  AND LOWER(COALESCE(o.email, '')) NOT LIKE '%test%'
+SELECT * FROM live_orders
+UNION ALL
+SELECT * FROM historical_events

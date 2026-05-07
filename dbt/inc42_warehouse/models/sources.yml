@@ -20,6 +20,10 @@ sources:
       - name: woocommerce_products
       - name: woocommerce_order_items
 
+      # WooCommerce events historical backfill (one-time CSV ingest, Apr 2026)
+      # D2C Summit 2.0 / 2023 / 3.0, GenAI Summit 2024/2025, Fintech Summit, Startup Leaders Pass
+      - name: woo_events_historical
+
       # Customer.io (GCS → Parquet)
       - name: cio_people
       - name: cio_attributes
