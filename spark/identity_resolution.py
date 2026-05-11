@@ -1,9 +1,16 @@
 """
 PySpark Identity Resolution — Real Data
-Reads from BigQuery Bronze → matches contacts across 5 systems → writes to Silver.
+Reads from BigQuery Bronze → matches contacts across 6 systems → writes to Silver.
 
-Sources: Inc42 DB, Customer.io, Tally, WooCommerce, Gravity Forms
-Match chain: Email exact → LinkedIn URL → Phone (normalized) → Name+Company (fuzzy)
+Sources: Inc42 DB, Customer.io, Tally, WooCommerce, Gravity Forms, HubSpot
+
+Resolution pipeline:
+  Step 4  Email exact match                              → initial clusters
+  Step 5  Phone match for email-less records             → links into existing clusters
+  Step 6  Assign individual IDs to remaining records
+  Step 6.5 Phone-bridge merge (name-collision guard)     → collapses work+personal-email duplicates
+  Step 6.6 LinkedIn-slug-bridge merge                    → same, via LinkedIn slug
+  Step 8  Per-field deterministic picks via Window+rank  → recency or priority per field
 
 Run: python spark/identity_resolution.py
 """
@@ -13,8 +20,9 @@ from pyspark.sql.functions import (
     col, lower, trim, coalesce, lit, regexp_replace,
     when, length, levenshtein, concat, md5, monotonically_increasing_id,
     collect_set, count, first, max as spark_max, array_distinct, flatten,
-    concat_ws, size
+    concat_ws, size, row_number, explode, array_min, to_timestamp
 )
+from pyspark.sql.window import Window
 from pyspark.sql.types import StringType
 from google.cloud import bigquery
 import os
@@ -71,6 +79,28 @@ def normalize_phone_col(phone_col):
     ).otherwise(None)
 
 
+# ── Source priority for deterministic picks ──
+# Lower rank = higher trust. Used as a tiebreak/primary key in Window ordering
+# when building unified_contacts. Per-field rules decide whether priority or
+# recency is the *first* sort key — see FIELD_RULES in Step 8.
+SOURCE_PRIORITY = {
+    "inc42_db":      1,
+    "customerio":    2,
+    "woocommerce":   3,
+    "hubspot":       4,
+    "tally":         5,
+    "gravity_forms": 6,
+}
+
+
+def add_source_priority(df):
+    """Attach a numeric source_priority column based on source_system."""
+    expr = lit(99)
+    for src, rank in SOURCE_PRIORITY.items():
+        expr = when(col("source_system") == src, lit(rank)).otherwise(expr)
+    return df.withColumn("source_priority", expr)
+
+
 # ── Helper: Normalize LinkedIn URL ──
 def normalize_linkedin_col(url_col):
     """Extract LinkedIn profile slug for comparison."""
@@ -100,7 +130,8 @@ inc42 = read_bq("""
         MAX(CASE WHEN m.meta_key = 'billing_company' THEN m.meta_value END) AS company_name,
         MAX(CASE WHEN m.meta_key = 'billing_designation' THEN m.meta_value END) AS designation,
         MAX(CASE WHEN m.meta_key = 'billing_city' THEN m.meta_value END) AS city,
-        CAST(NULL AS STRING) AS linkedin_url
+        CAST(NULL AS STRING) AS linkedin_url,
+        CAST(MAX(u.user_registered) AS STRING) AS last_modified_at
     FROM bronze.inc42_users u
     LEFT JOIN bronze.inc42_usermeta m ON u.ID = m.user_id
     WHERE u.user_email IS NOT NULL AND u.user_email != ''
@@ -123,7 +154,8 @@ customerio = read_bq("""
         MAX(CASE WHEN a.attribute_name IN ('Company_Name', 'Company Name') THEN a.attribute_value END) AS company_name,
         CAST(NULL AS STRING) AS designation,
         MAX(CASE WHEN a.attribute_name = 'cio_city' THEN a.attribute_value END) AS city,
-        MAX(CASE WHEN a.attribute_name = 'LinkedIn_Profile_URL' THEN a.attribute_value END) AS linkedin_url
+        MAX(CASE WHEN a.attribute_name = 'LinkedIn_Profile_URL' THEN a.attribute_value END) AS linkedin_url,
+        CAST(MAX(p.updated_at) AS STRING) AS last_modified_at
     FROM bronze.cio_people p
     LEFT JOIN bronze.cio_attributes a ON p.internal_customer_id = a.internal_customer_id
     WHERE p.email_addr IS NOT NULL AND p.email_addr != ''
@@ -146,7 +178,8 @@ tally = read_bq("""
         company_name,
         designation,
         city,
-        linkedin_url
+        linkedin_url,
+        CAST(submitted_at AS STRING) AS last_modified_at
     FROM bronze.tally_forms
     WHERE COALESCE(email, work_email) IS NOT NULL
 """)
@@ -167,7 +200,8 @@ woo = read_bq("""
         MAX(CASE WHEN m.meta_key = '_billing_company' THEN m.meta_value END) AS company_name,
         CAST(NULL AS STRING) AS designation,
         MAX(CASE WHEN m.meta_key = '_billing_city' THEN m.meta_value END) AS city,
-        CAST(NULL AS STRING) AS linkedin_url
+        CAST(NULL AS STRING) AS linkedin_url,
+        CAST(MAX(COALESCE(o.post_modified, o.post_date)) AS STRING) AS last_modified_at
     FROM bronze.woocommerce_orders o
     JOIN bronze.woocommerce_order_meta m ON o.order_id = m.order_id
     GROUP BY o.order_id
@@ -206,7 +240,8 @@ gravity = read_bq("""
             MAX(CASE WHEN m.meta_key IN ('1.3', '1') AND ef.email_field != '1' THEN m.meta_value END) AS first_name,
             MAX(CASE WHEN m.meta_key IN ('1.6', '2') AND ef.email_field != '2' THEN m.meta_value END) AS last_name,
             MAX(CASE WHEN m.meta_key IN ('3', '6') AND m.meta_value LIKE '(%' OR m.meta_value LIKE '+%' OR REGEXP_CONTAINS(m.meta_value, r'^[0-9]{10}') THEN m.meta_value END) AS raw_phone,
-            MAX(CASE WHEN m.meta_key IN ('4', '5', '10') AND LENGTH(m.meta_value) > 2 AND m.meta_value NOT LIKE '%@%' AND m.meta_value NOT LIKE 'http%' AND m.meta_value NOT LIKE '(%' THEN m.meta_value END) AS company_name
+            MAX(CASE WHEN m.meta_key IN ('4', '5', '10') AND LENGTH(m.meta_value) > 2 AND m.meta_value NOT LIKE '%@%' AND m.meta_value NOT LIKE 'http%' AND m.meta_value NOT LIKE '(%' THEN m.meta_value END) AS company_name,
+            MAX(COALESCE(e.date_updated, e.date_created)) AS last_modified_at
         FROM bronze.gravity_forms_entries e
         JOIN email_fields ef ON e.form_id = ef.form_id
         JOIN bronze.gravity_forms_entry_meta m ON e.id = m.entry_id AND e.form_id = m.form_id
@@ -223,7 +258,8 @@ gravity = read_bq("""
         company_name,
         CAST(NULL AS STRING) AS designation,
         CAST(NULL AS STRING) AS city,
-        CAST(NULL AS STRING) AS linkedin_url
+        CAST(NULL AS STRING) AS linkedin_url,
+        CAST(last_modified_at AS STRING) AS last_modified_at
     FROM pivoted
     WHERE email IS NOT NULL AND email LIKE '%@%'
 """)
@@ -244,7 +280,8 @@ hubspot = read_bq("""
         company_name,
         job_title AS designation,
         city,
-        linkedin_url
+        linkedin_url,
+        CAST(hubspot_modified_at AS STRING) AS last_modified_at
     FROM silver.hubspot_contacts_latest
     WHERE email IS NOT NULL AND email LIKE '%@%'
 """)
@@ -274,6 +311,9 @@ print("\n📞 Step 3: Normalizing phones & LinkedIn URLs...")
 all_contacts = all_contacts \
     .withColumn("phone", normalize_phone_col(col("raw_phone"))) \
     .withColumn("linkedin_slug", normalize_linkedin_col(col("linkedin_url")))
+
+# Attach source_priority for deterministic per-field picks in Step 8
+all_contacts = add_source_priority(all_contacts)
 
 phone_count = all_contacts.filter(col("phone").isNotNull()).count()
 linkedin_count = all_contacts.filter(col("linkedin_slug").isNotNull()).count()
@@ -378,6 +418,94 @@ if remaining > 0:
 
 
 # ══════════════════════════════════════════════════════════
+#  STEP 6.5 / 6.6: BRIDGE-BASED CLUSTER MERGES
+# ══════════════════════════════════════════════════════════
+# Email-keyed clusters (Step 4) leave duplicates of the same person who
+# registered with work+personal emails. Step 5 only links email-less
+# records — it does not merge two email-having clusters. So we now merge
+# clusters that share a bridge value (phone or LinkedIn slug). For phones
+# we apply a collision guard so shared office/household numbers don't
+# collapse different people.
+
+def merge_clusters_by(matched_df, bridge_col, name_guard=False, label="bridge", max_iter=5):
+    """
+    Iteratively collapse unified_contact_id clusters that share a bridge value.
+
+    Each iteration finds bridge values appearing in >1 cluster and remaps every
+    cluster_id in that set to the lexicographically smallest one. We iterate
+    because a single round only handles direct pairs — transitive merges
+    (A↔B via phone1, B↔C via phone2 ⇒ A=B=C) need more passes.
+    """
+    for iteration in range(max_iter):
+        bridges = (
+            matched_df
+            .filter(col(bridge_col).isNotNull())
+            .groupBy(bridge_col)
+            .agg(
+                collect_set("unified_contact_id").alias("cluster_ids"),
+                collect_set(lower(col("first_name"))).alias("first_names"),
+                collect_set(lower(col("last_name"))).alias("last_names"),
+            )
+            .filter(size(col("cluster_ids")) > 1)
+        )
+        if name_guard:
+            # Don't merge if the bridge connects >2 distinct names — likely a
+            # shared phone (office, household), not the same person.
+            bridges = bridges.filter(
+                (size(col("first_names")) <= 2) & (size(col("last_names")) <= 2)
+            )
+
+        remap = (
+            bridges
+            .select(
+                explode(col("cluster_ids")).alias("old_id"),
+                array_min(col("cluster_ids")).alias("new_id"),
+            )
+            .filter(col("old_id") != col("new_id"))
+            .distinct()
+        )
+
+        n_remap = remap.count()
+        if n_remap == 0:
+            print(f"  ✓ {label} merge converged after {iteration} iteration(s)")
+            break
+
+        print(f"    iteration {iteration + 1}: remapping {n_remap:,} cluster IDs")
+
+        matched_df = (
+            matched_df
+            .join(
+                remap,
+                matched_df.unified_contact_id == remap.old_id,
+                "left",
+            )
+            .withColumn(
+                "unified_contact_id",
+                coalesce(col("new_id"), col("unified_contact_id")),
+            )
+            .drop("old_id", "new_id")
+        )
+    else:
+        print(f"  ⚠️ {label} merge hit max_iter={max_iter} — graph may not have fully converged")
+    return matched_df
+
+
+print("\n🔀 Step 6.5: Merging clusters that share a phone (with name-collision guard)...")
+clusters_before = matched.select("unified_contact_id").distinct().count()
+matched = merge_clusters_by(matched, "phone", name_guard=True, label="phone")
+clusters_after_phone = matched.select("unified_contact_id").distinct().count()
+print(f"  Clusters: {clusters_before:,} → {clusters_after_phone:,} "
+      f"(merged {clusters_before - clusters_after_phone:,} via phone bridge)")
+
+
+print("\n🔀 Step 6.6: Merging clusters that share a LinkedIn slug...")
+matched = merge_clusters_by(matched, "linkedin_slug", name_guard=False, label="slug")
+clusters_after_slug = matched.select("unified_contact_id").distinct().count()
+print(f"  Clusters: {clusters_after_phone:,} → {clusters_after_slug:,} "
+      f"(merged {clusters_after_phone - clusters_after_slug:,} via slug bridge)")
+
+
+# ══════════════════════════════════════════════════════════
 #  STEP 7: BUILD CROSS-REFERENCE TABLE
 # ══════════════════════════════════════════════════════════
 print("\n📋 Step 7: Building contact_source_xref...")
@@ -394,6 +522,9 @@ xref = matched.select(
     "designation",
     "city",
     "linkedin_url",
+    "linkedin_slug",
+    "last_modified_at",
+    "source_priority",
 )
 
 xref_count = xref.count()
@@ -401,24 +532,76 @@ print(f"  ✓ {xref_count:,} rows in cross-reference")
 
 
 # ══════════════════════════════════════════════════════════
-#  STEP 8: BUILD UNIFIED CONTACTS (one row per person)
+#  STEP 8: BUILD UNIFIED CONTACTS (deterministic per-field picks)
 # ══════════════════════════════════════════════════════════
-print("\n👤 Step 8: Building unified_contacts...")
+# Replaces the previous `first(col, ignorenulls=True)` aggregation, which was
+# non-deterministic — Spark picked whichever non-null value landed first in
+# the partition. Now each field uses an explicit Window ordering with two
+# tunables: source_priority (auth'd source bias) and last_modified_at
+# (recency bias). FIELD_RULES below pick the ordering per field.
 
-unified = xref.groupBy("unified_contact_id").agg(
-    first("email", ignorenulls=True).alias("primary_email"),
-    first("phone", ignorenulls=True).alias("primary_phone"),
-    first("first_name", ignorenulls=True).alias("first_name"),
-    first("last_name", ignorenulls=True).alias("last_name"),
-    first("company_name", ignorenulls=True).alias("primary_company"),
-    first("designation", ignorenulls=True).alias("designation"),
-    first("city", ignorenulls=True).alias("city"),
-    first("linkedin_url", ignorenulls=True).alias("linkedin_url"),
+print("\n👤 Step 8: Building unified_contacts with deterministic per-field picks...")
+
+# Cast last_modified_at (always STRING through read_bq) back to timestamp
+ranked_base = xref.withColumn(
+    "_modified_ts",
+    to_timestamp(col("last_modified_at"))
+)
+
+
+def pick_best(df, value_col, alias, ordering):
+    """Pick the best non-null value per unified_contact_id by an explicit ordering.
+
+    `ordering` is a list of Spark Column expressions used in Window.orderBy.
+    We always sort nulls last for the value column itself so any non-null
+    candidate beats null, regardless of the tiebreaks.
+    """
+    w = (
+        Window.partitionBy("unified_contact_id")
+              .orderBy(col(value_col).isNull().asc(), *ordering)
+    )
+    return (
+        df.withColumn("_rn", row_number().over(w))
+          .filter(col("_rn") == 1)
+          .select("unified_contact_id", col(value_col).alias(alias))
+    )
+
+
+# Per-field ordering rules:
+#   priority_first — auth'd source wins; recency tiebreaks
+#   recency_first  — most recent value wins; source priority tiebreaks
+priority_first = [col("source_priority").asc(), col("_modified_ts").desc_nulls_last()]
+recency_first = [col("_modified_ts").desc_nulls_last(), col("source_priority").asc()]
+
+FIELD_RULES = [
+    # (xref_col,        unified_alias,      ordering)
+    ("email",           "primary_email",    priority_first),
+    ("phone",           "primary_phone",    recency_first),
+    ("first_name",      "first_name",       priority_first),
+    ("last_name",       "last_name",        priority_first),
+    ("company_name",    "primary_company",  recency_first),
+    ("designation",     "designation",      recency_first),
+    ("city",            "city",             recency_first),
+    ("linkedin_url",    "linkedin_url",     priority_first),
+]
+
+# Build unified frame: one row per unified_contact_id, then join each field
+unified = ranked_base.select("unified_contact_id").distinct()
+for value_col, alias, ordering in FIELD_RULES:
+    unified = unified.join(
+        pick_best(ranked_base, value_col, alias, ordering),
+        on="unified_contact_id",
+        how="left",
+    )
+
+# Aggregates (already deterministic — set/count operations)
+aggs = ranked_base.groupBy("unified_contact_id").agg(
     count("*").alias("source_count"),
     collect_set("source_system").alias("found_in_systems"),
     collect_set("email").alias("all_emails"),
     collect_set("phone").alias("all_phones"),
 )
+unified = unified.join(aggs, "unified_contact_id", "left")
 
 # Convert array columns to comma-separated strings for BigQuery
 unified = unified \
