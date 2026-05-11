@@ -299,6 +299,18 @@ properties AS (
         TRUE AS is_paid
     FROM {{ ref('fact_orders') }}
     WHERE is_successful = 1
+      AND product_type = 'membership'
+
+    UNION ALL
+
+    -- Paid events purchased via WooCommerce (summit passes etc.)
+    SELECT DISTINCT contact_key,
+        product_name AS property_name,
+        'event' AS property_type,
+        TRUE AS is_paid
+    FROM {{ ref('fact_orders') }}
+    WHERE is_successful = 1
+      AND product_type = 'event'
 
     UNION ALL
 
