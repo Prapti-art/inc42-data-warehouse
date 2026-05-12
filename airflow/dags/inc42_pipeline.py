@@ -141,13 +141,13 @@ with DAG(
 
     dbt_run = BashOperator(
         task_id="dbt_run_all",
-        bash_command=f"cd {PROJECT_DIR}/dbt/inc42_warehouse && dbt run --profiles-dir .",
+        bash_command=f"cd {PROJECT_DIR}/dbt/inc42_warehouse && dbt run --profiles-dir . --target-path /tmp/dbt_target --log-path /tmp/dbt_logs",
         doc="Run all dbt models: Silver (contacts, companies) → Gold (dims, facts, 360 views)",
     )
 
     dbt_test = BashOperator(
         task_id="dbt_test",
-        bash_command=f"cd {PROJECT_DIR}/dbt/inc42_warehouse && dbt test --profiles-dir .",
+        bash_command=f"cd {PROJECT_DIR}/dbt/inc42_warehouse && dbt test --profiles-dir . --target-path /tmp/dbt_target --log-path /tmp/dbt_logs",
         doc="Run dbt tests: uniqueness, not_null checks on key columns",
     )
 
