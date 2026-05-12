@@ -22,7 +22,7 @@ default_args = {
     "retry_delay": timedelta(minutes=5),
     "env": {
         "GOOGLE_APPLICATION_CREDENTIALS": CREDENTIALS,
-        "JAVA_HOME": "/usr/lib/jvm/java-17-openjdk-amd64",
+        "JAVA_HOME": "/usr/lib/jvm/java-21-openjdk-amd64",
         "MYSQL_HOST": "inc42-prod.mysql.database.azure.com",
         "MYSQL_USER": "{{ var.value.MYSQL_USER }}",
         "MYSQL_PASSWORD": "{{ var.value.MYSQL_PASSWORD }}",
