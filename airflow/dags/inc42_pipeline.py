@@ -23,6 +23,8 @@ default_args = {
     "env": {
         "GOOGLE_APPLICATION_CREDENTIALS": CREDENTIALS,
         "BQ_KEYFILE": CREDENTIALS,
+        "HOME": "/root",
+        "DBT_PROFILES_DIR": "/opt/inc42-data-warehouse/dbt/inc42_warehouse",
         "JAVA_HOME": "/usr/lib/jvm/java-21-openjdk-amd64",
         "PATH": "/usr/local/bin:/usr/bin:/bin",
         "PYSPARK_PYTHON": "/usr/local/bin/python3",
