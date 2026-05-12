@@ -192,7 +192,7 @@ print("  Loading WooCommerce (orders + order_meta)...")
 woo = read_bq("""
     SELECT
         'woocommerce' AS source_system,
-        CAST(o.order_id AS STRING) AS source_id,
+        CAST(o.ID AS STRING) AS source_id,
         LOWER(TRIM(MAX(CASE WHEN m.meta_key = '_billing_email' THEN m.meta_value END))) AS email,
         MAX(CASE WHEN m.meta_key = '_billing_first_name' THEN m.meta_value END) AS first_name,
         MAX(CASE WHEN m.meta_key = '_billing_last_name' THEN m.meta_value END) AS last_name,
@@ -203,8 +203,8 @@ woo = read_bq("""
         CAST(NULL AS STRING) AS linkedin_url,
         CAST(MAX(COALESCE(o.post_modified, o.post_date)) AS STRING) AS last_modified_at
     FROM bronze.woocommerce_orders o
-    JOIN bronze.woocommerce_order_meta m ON o.order_id = m.order_id
-    GROUP BY o.order_id
+    JOIN bronze.woocommerce_order_meta m ON o.ID = m.post_id
+    GROUP BY o.ID
     HAVING MAX(CASE WHEN m.meta_key = '_billing_email' THEN m.meta_value END) IS NOT NULL
 """)
 woo_count = woo.count() if woo else 0
