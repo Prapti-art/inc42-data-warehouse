@@ -23,6 +23,9 @@ default_args = {
     "env": {
         "GOOGLE_APPLICATION_CREDENTIALS": CREDENTIALS,
         "JAVA_HOME": "/usr/lib/jvm/java-21-openjdk-amd64",
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "PYSPARK_PYTHON": "/usr/local/bin/python3",
+        "PYSPARK_DRIVER_PYTHON": "/usr/local/bin/python3",
         "MYSQL_HOST": "inc42-prod.mysql.database.azure.com",
         "MYSQL_USER": "{{ var.value.MYSQL_USER }}",
         "MYSQL_PASSWORD": "{{ var.value.MYSQL_PASSWORD }}",
