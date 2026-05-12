@@ -314,11 +314,14 @@ properties AS (
 
     UNION ALL
 
-    -- Events (D2C, AI Workshop, GenAI Summit, Webinars)
+    -- Events (D2C, AI Workshop, GenAI Summit, Webinars) — form registrations only
+    -- is_paid is always FALSE here: paid attendance comes from the WooCommerce
+    -- branch above. Form registration alone (application, RSVP, waitlist) does
+    -- not mean the person paid, even if the event category is normally ticketed.
     SELECT DISTINCT contact_key,
         event_name AS property_name,
         'event' AS property_type,
-        CASE WHEN is_paid_event = 1 THEN TRUE ELSE FALSE END AS is_paid
+        FALSE AS is_paid
     FROM {{ ref('fact_event_attendance') }}
     WHERE event_type = 'event'
 
