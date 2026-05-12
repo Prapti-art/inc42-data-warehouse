@@ -52,28 +52,47 @@ def get_mysql_connection():
     )
 
 
+CHUNK_SIZE = 100_000
+
+
 def load_table(mysql_table, bq_table):
-    """Read MySQL table and load into BigQuery Bronze (full refresh)."""
-    print(f"  {mysql_table} → {bq_table}...", end=" ")
+    """Read MySQL table and stream into BigQuery Bronze (full refresh).
 
+    Streams in chunks of CHUNK_SIZE rows: first chunk WRITE_TRUNCATE
+    (replaces the table + resets schema), rest WRITE_APPEND. Keeps
+    pandas memory bounded so we don't OOM the 4GB container on the
+    larger MySQL tables (inc42_usermeta in particular).
+    """
+    print(f"  {mysql_table} → {bq_table}...", end=" ", flush=True)
+
+    full_table = f"{BQ_PROJECT}.{bq_table}"
     conn = get_mysql_connection()
+    total_rows = 0
+    first_chunk = True
     try:
-        df = pd.read_sql(f"SELECT * FROM `{mysql_table}`", conn)
-        print(f"({len(df):,} rows from MySQL)", end=" ")
+        for chunk in pd.read_sql(
+            f"SELECT * FROM `{mysql_table}`",
+            conn,
+            chunksize=CHUNK_SIZE,
+        ):
+            if chunk.empty:
+                continue
+            job_config = bigquery.LoadJobConfig(
+                write_disposition=(
+                    bigquery.WriteDisposition.WRITE_TRUNCATE if first_chunk
+                    else bigquery.WriteDisposition.WRITE_APPEND
+                ),
+                autodetect=True,
+            )
+            job = bq.load_table_from_dataframe(chunk, full_table, job_config=job_config)
+            job.result()
+            total_rows += len(chunk)
+            first_chunk = False
+            print(f"[{total_rows:,}]", end=" ", flush=True)
 
-        if df.empty:
+        if total_rows == 0:
             print("⚠️  Empty table, skipping")
             return 0
-
-        # Load to BigQuery (WRITE_TRUNCATE = full refresh)
-        job_config = bigquery.LoadJobConfig(
-            write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
-            autodetect=True,
-        )
-
-        full_table = f"{BQ_PROJECT}.{bq_table}"
-        job = bq.load_table_from_dataframe(df, full_table, job_config=job_config)
-        job.result()
 
         table = bq.get_table(full_table)
         print(f"✓ {table.num_rows:,} rows in BQ")
