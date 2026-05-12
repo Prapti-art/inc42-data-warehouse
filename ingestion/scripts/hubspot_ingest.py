@@ -400,6 +400,7 @@ def load_bronze(object_name, cfg, rows):
     job_config = bigquery.LoadJobConfig(
         write_disposition="WRITE_APPEND",
         schema=schema,
+        schema_update_options=["ALLOW_FIELD_ADDITION"],
     )
     job = bq.load_table_from_dataframe(df, cfg["table"], job_config=job_config)
     job.result()
