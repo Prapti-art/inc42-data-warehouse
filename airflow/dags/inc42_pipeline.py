@@ -22,6 +22,7 @@ default_args = {
     "retry_delay": timedelta(minutes=5),
     "env": {
         "GOOGLE_APPLICATION_CREDENTIALS": CREDENTIALS,
+        "BQ_KEYFILE": CREDENTIALS,
         "JAVA_HOME": "/usr/lib/jvm/java-21-openjdk-amd64",
         "PATH": "/usr/local/bin:/usr/bin:/bin",
         "PYSPARK_PYTHON": "/usr/local/bin/python3",
