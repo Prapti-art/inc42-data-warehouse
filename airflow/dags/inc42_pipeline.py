@@ -69,6 +69,7 @@ with DAG(
     ingest_tally = BashOperator(
         task_id="load_tally_forms",
         bash_command=f"python {PROJECT_DIR}/ingestion/scripts/tally_ingest.py",
+        env={"TALLY_API_KEY": "{{ var.value.TALLY_API_KEY }}"},
         doc="Fetch all Tally form submissions via REST API → bronze.tally_forms",
     )
 
