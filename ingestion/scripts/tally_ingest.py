@@ -316,6 +316,7 @@ def load_to_bigquery(rows):
             bigquery.SchemaField("_form_id", "STRING"),
         ],
         write_disposition="WRITE_APPEND",
+        schema_update_options=["ALLOW_FIELD_ADDITION"],
     )
 
     import pandas as pd
