@@ -25,8 +25,12 @@ os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS",
 
 spark = SparkSession.builder \
     .appName("inc42_identity_resolution") \
-    .master("local[*]") \
-    .config("spark.driver.memory", "3g") \
+    .master("local[2]") \
+    .config("spark.driver.memory", "2g") \
+    .config("spark.driver.maxResultSize", "1g") \
+    .config("spark.sql.shuffle.partitions", "8") \
+    .config("spark.sql.adaptive.enabled", "true") \
+    .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
     .getOrCreate()
 spark.sparkContext.setLogLevel("WARN")
 
@@ -39,19 +43,27 @@ print("=" * 60)
 
 # ── Helper: Read BigQuery table into Spark DataFrame ──
 def read_bq(query):
-    """Run BigQuery SQL, convert to Spark DataFrame."""
+    """Run BigQuery SQL, convert to Spark DataFrame.
+
+    Avoids extra pandas copies: in-place fillna/astype on object columns
+    only, no whole-frame .astype(str).where() materialisation. Releases
+    pandas frame as soon as Spark DF is built.
+    """
     df = bq.query(query).to_dataframe()
     if df.empty:
         return None
-    # Fill NaN/None in object columns with None (avoids type inference issues)
+    # In-place clean of object columns: empty string ↔ None
     for col_name in df.columns:
         if df[col_name].dtype == "object":
-            df[col_name] = df[col_name].fillna("").astype(str)
-            df[col_name] = df[col_name].replace("", None)
-    # Force all columns to string to avoid inference failures
+            df[col_name] = df[col_name].astype(str).where(df[col_name].notna(), None)
+            df[col_name] = df[col_name].replace({"": None, "None": None, "nan": None})
+    # Schema = all strings (avoids type inference passes)
     from pyspark.sql.types import StructType, StructField, StringType
     schema = StructType([StructField(c, StringType(), True) for c in df.columns])
-    return spark.createDataFrame(df.astype(str).where(df.notna(), None), schema=schema)
+    sdf = spark.createDataFrame(df, schema=schema)
+    del df  # release pandas frame
+    import gc; gc.collect()
+    return sdf
 
 
 # ── Helper: Normalize phone to E.164 (+91XXXXXXXXXX) ──
