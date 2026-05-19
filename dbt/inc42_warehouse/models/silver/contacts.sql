@@ -6,8 +6,15 @@ WITH unified AS (
 ),
 
 -- ── Inc42 DB: users + usermeta (pivoted — ALL useful meta_keys) ──
+-- Wrapped in QUALIFY to keep one row per email (latest user_registered wins)
+-- so downstream LEFT JOIN cannot fan out when a single email has multiple user IDs.
 inc42 AS (
+    SELECT * EXCEPT(rn) FROM (
     SELECT
+        ROW_NUMBER() OVER (
+            PARTITION BY LOWER(TRIM(u.user_email))
+            ORDER BY u.user_registered DESC, u.ID DESC
+        ) AS rn,
         LOWER(TRIM(u.user_email)) AS email,
         MAX(CASE WHEN m.meta_key = 'first_name' THEN m.meta_value END) AS first_name,
         MAX(CASE WHEN m.meta_key = 'last_name' THEN m.meta_value END) AS last_name,
@@ -47,11 +54,18 @@ inc42 AS (
     LEFT JOIN {{ source('bronze', 'inc42_usermeta') }} m ON u.ID = m.user_id
     WHERE u.user_email IS NOT NULL AND u.user_email != ''
     GROUP BY u.ID, u.user_email, u.user_registered
+    ) WHERE rn = 1
 ),
 
 -- ── Customer.io: people + attributes (pivoted — ALL useful attributes) ──
+-- Wrapped in ROW_NUMBER to keep one row per email so downstream JOIN can't fan out.
 customerio AS (
+    SELECT * EXCEPT(rn) FROM (
     SELECT
+        ROW_NUMBER() OVER (
+            PARTITION BY LOWER(TRIM(p.email_addr))
+            ORDER BY p.internal_customer_id DESC
+        ) AS rn,
         LOWER(TRIM(p.email_addr)) AS email,
         MAX(COALESCE(p.suppressed, FALSE)) AS is_suppressed,
         MAX(CASE WHEN a.attribute_name = 'First_Name' THEN a.attribute_value END) AS first_name,
@@ -102,6 +116,7 @@ customerio AS (
     LEFT JOIN {{ source('bronze', 'cio_attributes') }} a ON p.internal_customer_id = a.internal_customer_id
     WHERE p.email_addr IS NOT NULL AND p.email_addr != ''
     GROUP BY p.internal_customer_id, p.email_addr
+    ) WHERE rn = 1
 ),
 
 -- ── WooCommerce: order_meta (pivoted, deduped to latest order per email) ──
