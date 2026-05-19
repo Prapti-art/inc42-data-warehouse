@@ -227,14 +227,8 @@ SELECT
     u.primary_email AS email,
 
     -- ═══ NAME ═══
-    COALESCE(
-        NULLIF(i.first_name, ''), NULLIF(c.first_name, ''),
-        NULLIF(w.first_name, ''), NULLIF(t.first_name, ''), u.first_name
-    ) AS first_name,
-    COALESCE(
-        NULLIF(i.last_name, ''), NULLIF(c.last_name, ''),
-        NULLIF(w.last_name, ''), NULLIF(t.last_name, ''), u.last_name
-    ) AS last_name,
+    {{ title_case_clean('COALESCE(NULLIF(i.first_name, ""), NULLIF(c.first_name, ""), NULLIF(w.first_name, ""), NULLIF(t.first_name, ""), u.first_name)') }} AS first_name,
+    {{ title_case_clean('COALESCE(NULLIF(i.last_name, ""), NULLIF(c.last_name, ""), NULLIF(w.last_name, ""), NULLIF(t.last_name, ""), u.last_name)') }} AS last_name,
 
     -- ═══ PHONE ═══ (PySpark normalized, filter fake numbers)
     CASE
@@ -249,20 +243,11 @@ SELECT
     END AS phone,
 
     -- ═══ COMPANY ═══
-    COALESCE(
-        NULLIF(i.company_name, ''), NULLIF(c.company_name, ''),
-        NULLIF(w.company_name, ''), NULLIF(t.company_name, ''),
-        NULLIF(gf.company_name, ''), NULLIF(h.company_name, ''),
-        u.primary_company
-    ) AS company_name,
-    NULLIF(c.company_website, '') AS company_website,
+    {{ scrub_sentinel('COALESCE(NULLIF(i.company_name, ""), NULLIF(c.company_name, ""), NULLIF(w.company_name, ""), NULLIF(t.company_name, ""), NULLIF(gf.company_name, ""), NULLIF(h.company_name, ""), u.primary_company)', allow_short=False) }} AS company_name,
+    {{ scrub_sentinel('c.company_website', allow_short=False) }} AS company_website,
 
     -- ═══ DESIGNATION ═══
-    COALESCE(
-        NULLIF(i.designation, ''), NULLIF(i.user_designation, ''),
-        NULLIF(i.working_designation, ''), NULLIF(c.designation, ''),
-        NULLIF(t.designation, ''), NULLIF(h.designation, '')
-    ) AS designation,
+    {{ scrub_sentinel('COALESCE(NULLIF(i.designation, ""), NULLIF(i.user_designation, ""), NULLIF(i.working_designation, ""), NULLIF(c.designation, ""), NULLIF(t.designation, ""), NULLIF(h.designation, ""))', allow_short=False) }} AS designation,
 
     -- ═══ SENIORITY ═══ (Inc42 108K > CIO 19K > GF88 87K > WooCommerce > Tally)
     COALESCE(
@@ -282,12 +267,12 @@ SELECT
         NULLIF(t.linkedin_url, ''), NULLIF(h.linkedin_url, '')
     ) AS linkedin_url,
 
-    -- ═══ LOCATION ═══
-    COALESCE(NULLIF(i.city, ''), NULLIF(c.city, ''), NULLIF(w.city, ''), NULLIF(t.city, ''), NULLIF(h.city, '')) AS city,
-    COALESCE(NULLIF(i.state, ''), NULLIF(c.region, ''), NULLIF(w.state, ''), NULLIF(h.state, '')) AS state,
-    COALESCE(NULLIF(i.country, ''), NULLIF(c.country, ''), NULLIF(w.country, ''), NULLIF(h.country, '')) AS country,
-    COALESCE(NULLIF(i.postcode, ''), NULLIF(c.postal_code, ''), NULLIF(w.postcode, '')) AS postcode,
-    COALESCE(NULLIF(i.address, ''), NULLIF(w.address, '')) AS address,
+    -- ═══ LOCATION (normalized) ═══
+    {{ normalize_city('COALESCE(NULLIF(i.city, ""), NULLIF(c.city, ""), NULLIF(w.city, ""), NULLIF(t.city, ""), NULLIF(h.city, ""))') }} AS city,
+    {{ normalize_state('COALESCE(NULLIF(i.state, ""), NULLIF(c.region, ""), NULLIF(w.state, ""), NULLIF(h.state, ""))') }} AS state,
+    {{ normalize_country('COALESCE(NULLIF(i.country, ""), NULLIF(c.country, ""), NULLIF(w.country, ""), NULLIF(h.country, ""))') }} AS country,
+    {{ scrub_sentinel('COALESCE(NULLIF(i.postcode, ""), NULLIF(c.postal_code, ""), NULLIF(w.postcode, ""))', allow_short=False) }} AS postcode,
+    {{ scrub_sentinel('COALESCE(NULLIF(i.address, ""), NULLIF(w.address, ""))', allow_short=False) }} AS address,
     c.timezone,
 
     -- ═══ USER CLASSIFICATION ═══
