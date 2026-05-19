@@ -289,6 +289,68 @@ marketing AS (
 ),
 
 -- ═══════════════════════════════════════════════
+-- MOENGAGE ENGAGEMENT (push/email/whatsapp reachability + LTV/session signals)
+-- One row per canonical email. Where multiple rows share an email, keep the
+-- most recently active record (last_seen DESC) so engagement reflects the
+-- latest device/profile.
+-- ═══════════════════════════════════════════════
+moengage_engagement AS (
+    SELECT
+        email,
+        first_seen AS moengage_first_seen,
+        last_seen AS moengage_last_seen,
+        SAFE_CAST(ltv AS FLOAT64) AS moengage_ltv,
+        SAFE_CAST(no_of_sessions AS INT64) AS moengage_sessions,
+        SAFE_CAST(no_of_conversions AS INT64) AS moengage_conversions,
+        user_creation_source AS moengage_user_source,
+        install_status AS moengage_install_status,
+        reachability_push AS moengage_reachability_push,
+        reachability_push_android AS moengage_reachability_push_android,
+        reachability_push_ios AS moengage_reachability_push_ios,
+        reachability_push_web AS moengage_reachability_push_web,
+        email_opt_in_status AS moengage_email_optin,
+        hard_bounce AS moengage_hard_bounce,
+        spam AS moengage_spam_flag,
+        unsubscribe AS moengage_unsubscribe_flag,
+        sms_subscription_status AS moengage_sms_status,
+        web_push_subscription_status AS moengage_web_push_status,
+        whatsapp_subscription_status AS moengage_whatsapp_status,
+        last_known_city AS moengage_last_city,
+        last_known_state AS moengage_last_state,
+        last_known_country AS moengage_last_country,
+        last_known_pincode AS moengage_last_pincode
+    FROM (
+        SELECT *,
+            ROW_NUMBER() OVER (
+                PARTITION BY LOWER(TRIM(COALESCE(
+                    NULLIF(email_standard, ''),
+                    NULLIF(work_email, ''),
+                    NULLIF(personal_email, ''),
+                    NULLIF(plus_email, ''),
+                    NULLIF(secondary_email, '')
+                )))
+                ORDER BY last_seen DESC NULLS LAST
+            ) AS rn,
+            LOWER(TRIM(COALESCE(
+                NULLIF(email_standard, ''),
+                NULLIF(work_email, ''),
+                NULLIF(personal_email, ''),
+                NULLIF(plus_email, ''),
+                NULLIF(secondary_email, '')
+            ))) AS email
+        FROM {{ source('bronze', 'moengage_export') }}
+        WHERE COALESCE(
+            NULLIF(email_standard, ''),
+            NULLIF(work_email, ''),
+            NULLIF(personal_email, ''),
+            NULLIF(plus_email, ''),
+            NULLIF(secondary_email, '')
+        ) IS NOT NULL
+    )
+    WHERE rn = 1
+),
+
+-- ═══════════════════════════════════════════════
 -- PROPERTY INTERACTIONS (properly categorized)
 -- ═══════════════════════════════════════════════
 properties AS (
@@ -592,6 +654,30 @@ SELECT
     COALESCE(it.interest_startups, FALSE) AS interest_startups,
     COALESCE(it.interest_investor_content, FALSE) AS interest_investor_content,
 
+    -- ═══ MOENGAGE ENGAGEMENT (reachability + sessions/LTV) ═══
+    me.moengage_first_seen,
+    me.moengage_last_seen,
+    me.moengage_ltv,
+    me.moengage_sessions,
+    me.moengage_conversions,
+    me.moengage_user_source,
+    me.moengage_install_status,
+    me.moengage_reachability_push,
+    me.moengage_reachability_push_android,
+    me.moengage_reachability_push_ios,
+    me.moengage_reachability_push_web,
+    me.moengage_email_optin,
+    me.moengage_hard_bounce,
+    me.moengage_spam_flag,
+    me.moengage_unsubscribe_flag,
+    me.moengage_sms_status,
+    me.moengage_web_push_status,
+    me.moengage_whatsapp_status,
+    me.moengage_last_city,
+    me.moengage_last_state,
+    me.moengage_last_country,
+    me.moengage_last_pincode,
+
     -- ═══ SOURCE COVERAGE ═══
     c.source_count,
     c.found_in_systems,
@@ -608,6 +694,7 @@ LEFT JOIN events ev ON c.contact_key = ev.contact_key
 LEFT JOIN forms f ON c.contact_key = f.contact_key
 LEFT JOIN marketing m ON c.contact_key = m.contact_key
 LEFT JOIN property_agg p ON c.contact_key = p.contact_key
+LEFT JOIN moengage_engagement me ON LOWER(c.email) = me.email
 
 -- Company enrichment (via company name)
 LEFT JOIN company_match cm ON LOWER(TRIM(c.company_name)) = cm.company_name_lower

@@ -43,6 +43,9 @@ sources:
       - name: hubspot_companies
       - name: hubspot_deals
 
+      # Moengage (one-shot CSV export)
+      - name: moengage_export
+
       # Datalabs (PostgreSQL)
       - name: dl_company_table
       - name: dl_funding_table

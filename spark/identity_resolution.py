@@ -1,8 +1,8 @@
 """
 PySpark Identity Resolution — Real Data
-Reads from BigQuery Bronze → matches contacts across 5 systems → writes to Silver.
+Reads from BigQuery Bronze → matches contacts across 7 systems → writes to Silver.
 
-Sources: Inc42 DB, Customer.io, Tally, WooCommerce, Gravity Forms
+Sources: Inc42 DB, Customer.io, Tally, WooCommerce, Gravity Forms, HubSpot, Moengage
 Match chain: Email exact → LinkedIn URL → Phone (normalized) → Name+Company (fuzzy)
 
 Run: python spark/identity_resolution.py
@@ -264,12 +264,52 @@ hubspot_count = hubspot.count() if hubspot else 0
 print(f"    ✓ {hubspot_count:,} contacts")
 
 
+# ── Moengage: one-shot export, flat (bronze.moengage_export) ──
+# All columns are STRING in raw layer; column names sanitized at load time.
+# We coalesce 5 email fields and 2 phone fields. Only rows with an email
+# are eligible for identity-resolution (anonymous SDK profiles are skipped).
+print("  Loading Moengage export...")
+moengage = read_bq("""
+    SELECT
+        'moengage' AS source_system,
+        COALESCE(NULLIF(id, ''), NULLIF(uid, ''), NULLIF(moengage_id, '')) AS source_id,
+        LOWER(TRIM(COALESCE(
+            NULLIF(email_standard, ''),
+            NULLIF(work_email, ''),
+            NULLIF(personal_email, ''),
+            NULLIF(plus_email, ''),
+            NULLIF(secondary_email, '')
+        ))) AS email,
+        first_name,
+        last_name,
+        COALESCE(NULLIF(phone_number, ''), NULLIF(mobile_number_standard, '')) AS raw_phone,
+        company_name,
+        designation,
+        last_known_city AS city,
+        COALESCE(
+            NULLIF(linkedin_profile_url, ''),
+            NULLIF(linkedinurl, ''),
+            NULLIF(linkedin, '')
+        ) AS linkedin_url
+    FROM bronze.moengage_export
+    WHERE COALESCE(
+        NULLIF(email_standard, ''),
+        NULLIF(work_email, ''),
+        NULLIF(personal_email, ''),
+        NULLIF(plus_email, ''),
+        NULLIF(secondary_email, '')
+    ) IS NOT NULL
+""")
+moengage_count = moengage.count() if moengage else 0
+print(f"    ✓ {moengage_count:,} contacts")
+
+
 # ══════════════════════════════════════════════════════════
 #  STEP 2: UNION ALL SOURCES
 # ══════════════════════════════════════════════════════════
 print(f"\n📊 Step 2: Combining all sources...")
 
-sources = [df for df in [inc42, customerio, tally, woo, gravity, hubspot] if df is not None]
+sources = [df for df in [inc42, customerio, tally, woo, gravity, hubspot, moengage] if df is not None]
 all_contacts = sources[0]
 for df in sources[1:]:
     all_contacts = all_contacts.unionByName(df, allowMissingColumns=True)
@@ -489,6 +529,7 @@ Sources:
   WooCommerce:    {woo_count:>10,} records
   Gravity Forms:  {gf_count:>10,} records
   HubSpot:        {hubspot_count:>10,} records
+  Moengage:       {moengage_count:>10,} records
   ─────────────────────────────
   Total input:    {total:>10,} records
 
