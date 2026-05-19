@@ -118,8 +118,112 @@
 
 
 {# ──────────────────────────────────────────────────────────────────
-   normalize_city: canonical Indian city names (and title-case rest)
+   normalize_seniority: collapse the long tail of seniority labels
+   into a fixed bucket set: Founder, C-Suite, VP/Director, Manager,
+   Senior, Associate, Junior, Intern, Student, Investor, Partner,
+   Researcher, Consultant. Garbage / "Other" -> NULL.
    ────────────────────────────────────────────────────────────────── #}
+{% macro normalize_seniority(col) %}
+    CASE
+        WHEN {{ scrub_sentinel(col) }} IS NULL THEN NULL
+        WHEN LOWER(TRIM({{ col }})) IN ('other','others','none','n/a','na') THEN NULL
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'founder|owner|promoter') THEN 'Founder'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'\bceo\b|\bcfo\b|\bcto\b|\bcoo\b|\bcmo\b|\bcpo\b|\bchro\b|\bcxo\b|c-?suite|c-?level|chief|president\b|leadership|senior[ _-]management|senior[ _-]leadership') THEN 'C-Suite'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'\bvp\b|vice president|director|general manager|\bgm\b|head of|head -') THEN 'VP/Director'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'senior manager|sr\.? manager|senior_associate') THEN 'Senior'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'manager|middle[ _-]management') THEN 'Manager'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'analyst|associate') THEN 'Associate'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'junior|jr\.?|trainee|fresher') THEN 'Junior'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'intern\b|internship') THEN 'Intern'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'student|undergrad|graduate student') THEN 'Student'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'investor|venture|angel') THEN 'Investor'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'\bpartner\b') THEN 'Partner'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'researcher|academic|journalist|professor|faculty') THEN 'Researcher'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'consultant|advisor|advisory') THEN 'Consultant'
+        ELSE INITCAP(REGEXP_REPLACE(LOWER(TRIM({{ col }})), r'[_-]+', ' '))
+    END
+{% endmacro %}
+
+
+{# ──────────────────────────────────────────────────────────────────
+   normalize_job_function: collapse function labels into a fixed set:
+   Engineering, Product, Design, Data, Marketing, Sales & BD,
+   Operations, Finance & Accounting, HR, Legal & Compliance,
+   Consulting, Research, Founders Office, R&D.
+   "Others" -> NULL.
+   ────────────────────────────────────────────────────────────────── #}
+{% macro normalize_job_function(col) %}
+    CASE
+        WHEN {{ scrub_sentinel(col) }} IS NULL THEN NULL
+        WHEN LOWER(TRIM({{ col }})) IN ('other','others','none','n/a','na') THEN NULL
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'engineering|engineer\b|software|developer') THEN 'Engineering'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'product\b') THEN 'Product'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'design\b|\bux\b|\bui\b') THEN 'Design'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'\bdata\b|analytics|machine learning|\bai\b|\bml\b') THEN 'Data'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'marketing|growth|brand') THEN 'Marketing'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'sales|business[ _]development|\bbd\b|biz[ _]dev') THEN 'Sales & BD'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'finance|accounting|\bfp&a\b|\bfpa\b|treasury') THEN 'Finance & Accounting'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'human resources|\bhr\b|talent|people|l&d|lnd') THEN 'HR'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'legal|compliance|secretarial') THEN 'Legal & Compliance'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'consult') THEN 'Consulting'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'research') THEN 'Research'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'founder.?s? office|chief of staff') THEN 'Founders Office'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'\br&d\b|\brd\b|r and d') THEN 'R&D'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'operations|\bops\b|management') THEN 'Operations'
+        ELSE INITCAP(REGEXP_REPLACE(LOWER(TRIM({{ col }})), r'[_-]+', ' '))
+    END
+{% endmacro %}
+
+
+{# ──────────────────────────────────────────────────────────────────
+   normalize_designation: clean + title-case, but preserve common
+   business acronyms (CEO, CTO, CFO, COO, CMO, CXO, VP, MD, GM, HR,
+   PR, IT, BD, ML, AI, UX, UI, SDE, QA, KAM, PM). Also canonicalizes
+   founder/CEO variants.
+   ────────────────────────────────────────────────────────────────── #}
+{% macro normalize_designation(col) %}
+    CASE
+        WHEN {{ scrub_sentinel(col, allow_short=false) }} IS NULL THEN NULL
+        WHEN REGEXP_CONTAINS(LOWER(TRIM({{ col }})), r'^(co[ -]?founder)( & ?| and )(ceo)$') THEN 'Co-Founder & CEO'
+        WHEN REGEXP_CONTAINS(LOWER(TRIM({{ col }})), r'^co[ -]?founder$') THEN 'Co-Founder'
+        WHEN REGEXP_CONTAINS(LOWER(TRIM({{ col }})), r'^(founder)( & ?| and |/)(ceo)$') THEN 'Founder & CEO'
+        WHEN REGEXP_CONTAINS(LOWER(TRIM({{ col }})), r'^founder$') THEN 'Founder'
+        WHEN REGEXP_CONTAINS(LOWER(TRIM({{ col }})), r'^chief executive officer$') THEN 'CEO'
+        WHEN REGEXP_CONTAINS(LOWER(TRIM({{ col }})), r'^chief (financial|technology|operating|marketing|product|people|human resources) officer$')
+            THEN CASE LOWER(REGEXP_EXTRACT({{ col }}, r'(?i)Chief\s+(\w+(?:\s+\w+)?)\s+Officer'))
+                WHEN 'financial' THEN 'CFO'
+                WHEN 'technology' THEN 'CTO'
+                WHEN 'operating' THEN 'COO'
+                WHEN 'marketing' THEN 'CMO'
+                WHEN 'product' THEN 'CPO'
+                WHEN 'people' THEN 'CHRO'
+                WHEN 'human resources' THEN 'CHRO'
+                ELSE INITCAP(TRIM({{ col }}))
+            END
+        ELSE {{ uppercase_acronyms('INITCAP(REGEXP_REPLACE(TRIM(' ~ col ~ "), r'\\s+', ' '))") }}
+    END
+{% endmacro %}
+
+
+{# Helper: re-uppercase common business acronyms after INITCAP.
+   BigQuery REGEXP_REPLACE has no callback, so we chain literal replacements. #}
+{% macro uppercase_acronyms(expr) %}
+    REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(
+    REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(
+    REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(
+    REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(
+    REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(
+    REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(
+    REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(
+        {{ expr }},
+        r'\bCeo\b','CEO'), r'\bCto\b','CTO'), r'\bCfo\b','CFO'), r'\bCoo\b','COO'), r'\bCmo\b','CMO'),
+        r'\bCpo\b','CPO'), r'\bChro\b','CHRO'), r'\bCxo\b','CXO'), r'\bCdo\b','CDO'), r'\bCgo\b','CGO'),
+        r'\bVp\b','VP'), r'\bAvp\b','AVP'), r'\bSvp\b','SVP'), r'\bEvp\b','EVP'), r'\bMd\b','MD'),
+        r'\bGm\b','GM'), r'\bHr\b','HR'), r'\bPr\b','PR'), r'\bIt\b','IT'), r'\bBd\b','BD'),
+        r'\bPm\b','PM'), r'\bKam\b','KAM'), r'\bSde\b','SDE'), r'\bQa\b','QA'), r'\bSme\b','SME'),
+        r'\bAi\b','AI'), r'\bMl\b','ML'), r'\bUx\b','UX'), r'\bUi\b','UI'), r'\bCrm\b','CRM'),
+        r'\bErp\b','ERP'), r'\bSaas\b','SaaS'), r'\bB2b\b','B2B'), r'\bB2c\b','B2C'), r'\bD2c\b','D2C')
+{% endmacro %}
 {% macro normalize_city(col) %}
     CASE UPPER(TRIM({{ scrub_sentinel(col) }}))
         WHEN 'BANGALORE' THEN 'Bengaluru' WHEN 'BANGLORE' THEN 'Bengaluru'

@@ -480,8 +480,8 @@ SELECT
     -- ═══ PROFESSIONAL ═══
     c.company_name,
     COALESCE(c.designation, pe.job_title) AS designation,
-    COALESCE(c.seniority, CAST(pe.job_seniority AS STRING)) AS seniority,
-    pe.job_function,
+    COALESCE(c.seniority, {{ normalize_seniority('CAST(pe.job_seniority AS STRING)') }}) AS seniority,
+    {{ normalize_job_function('pe.job_function') }} AS job_function,
     c.linkedin_url,
     c.city,
     c.state,

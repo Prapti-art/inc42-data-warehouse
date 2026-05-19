@@ -247,13 +247,10 @@ SELECT
     {{ scrub_sentinel('c.company_website', allow_short=False) }} AS company_website,
 
     -- ═══ DESIGNATION ═══
-    {{ scrub_sentinel('COALESCE(NULLIF(i.designation, ""), NULLIF(i.user_designation, ""), NULLIF(i.working_designation, ""), NULLIF(c.designation, ""), NULLIF(t.designation, ""), NULLIF(h.designation, ""))', allow_short=False) }} AS designation,
+    {{ normalize_designation('COALESCE(NULLIF(i.designation, ""), NULLIF(i.user_designation, ""), NULLIF(i.working_designation, ""), NULLIF(c.designation, ""), NULLIF(t.designation, ""), NULLIF(h.designation, ""))') }} AS designation,
 
-    -- ═══ SENIORITY ═══ (Inc42 108K > CIO 19K > GF88 87K > WooCommerce > Tally)
-    COALESCE(
-        NULLIF(i.seniority, ''), NULLIF(c.seniority, ''),
-        NULLIF(gf.seniority, ''), NULLIF(w.seniority, ''), NULLIF(t.seniority, '')
-    ) AS seniority,
+    -- ═══ SENIORITY ═══ (normalized to fixed bucket set)
+    {{ normalize_seniority('COALESCE(NULLIF(i.seniority, ""), NULLIF(c.seniority, ""), NULLIF(gf.seniority, ""), NULLIF(w.seniority, ""), NULLIF(t.seniority, ""))') }} AS seniority,
 
     -- ═══ INDUSTRY ═══ (Inc42 44K > CIO 8K > GF88 87K > Tally)
     COALESCE(
@@ -287,7 +284,7 @@ SELECT
             THEN REPLACE(COALESCE(i.company_type, c.user_type), '_', ' ')
         ELSE NULL
     END AS user_type,
-    i.company_function,
+    {{ normalize_job_function('i.company_function') }} AS company_function,
     i.investor_type,
 
     -- ═══ ICP SCORING ═══
