@@ -34,8 +34,8 @@
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'\bconclave\b') THEN 'conclave'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'\bshow\b') THEN 'show'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'\bsubmissions?\b|\bapplication\b|\bspotlight\b|\bprogram\b|fast[ _-]?42|bigshift|brandlabs') THEN 'program'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'd2c[ _-]?day') THEN 'summit'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'\bsummit\b|d2cx converge') THEN 'summit'
-        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'\bday\b') THEN 'day'
         ELSE 'event'
     END
 {% endmacro %}
