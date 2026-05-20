@@ -46,6 +46,9 @@ sources:
       # Moengage (one-shot CSV export)
       - name: moengage_export
 
+      # WooCommerce events full backfill (xlsx, May 2026 — supersedes woo_events_historical)
+      - name: woo_events_full
+
       # Datalabs (PostgreSQL)
       - name: dl_company_table
       - name: dl_funding_table

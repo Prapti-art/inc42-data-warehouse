@@ -8,8 +8,7 @@
         WHEN {{ col }} IS NULL OR TRIM({{ col }}) = '' THEN NULL
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'd2cx[ _-]?converge') THEN 'D2CX Converge'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'd2c[ _-]?(summit|day|retreat|&[ _-]?retail|whatsapp videos)|d2c summit|the d2c') THEN 'D2C Summit'
-        -- Standalone D2C Summit pass SKUs (product_name has no event prefix)
-        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'^(select|enabler|transfer|investor|all access|startup leaders|team (select|enabler|investor|all access))( pass| pass\s*-)?\b') THEN 'D2C Summit'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'inc42 ai summit|ai summit by inc42|ai-summit') THEN 'Inc42 AI Summit'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'genai|gen ai') THEN 'GenAI Summit'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'fintech[ _-]?summit|fintech') THEN 'Fintech Summit'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'\bfast[ _-]?42\b') THEN 'FAST42'
@@ -21,6 +20,9 @@
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'startup submissions|startup spotlight|startup deals|startup program') THEN 'Startup Programs'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'webinar|niti aayog|100x vc|covid') THEN 'Webinars'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'summit') THEN 'Other Summits'
+        -- Last-resort: standalone D2C Summit pass SKUs (no event prefix in name).
+        -- These tier names are exclusive to D2C Summit at Inc42.
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'^(select|enabler|transfer|investor|all access|growth|team (select|enabler|investor|all access|growth))( pass| pass\s*-)?\b') THEN 'D2C Summit'
         ELSE 'Other Events'
     END
 {% endmacro %}

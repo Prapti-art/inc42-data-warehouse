@@ -131,47 +131,42 @@ live_orders AS (
       AND LOWER(COALESCE(o.email, '')) NOT LIKE '%test%'
 ),
 
--- Historical event-ticket orders (one-time CSV backfill — Apr 2026)
+-- Historical event-ticket orders (rich xlsx backfill — May 2026).
+-- order_line_title is the proper event identifier (e.g., "Inc42 AI Summit 2026",
+-- "The D2C Summit 3.0 - All Access Pass") and is preferred over product_name.
 historical_events AS (
     SELECT
         CAST(NULL AS INT64) AS order_item_id,
-        h.order_id,
+        SAFE_CAST(h.order_id AS INT64) AS order_id,
         dc.contact_key,
-        CAST(FORMAT_DATE('%Y%m%d', DATE(h.order_date)) AS INT64) AS order_date_key,
+        CAST(FORMAT_DATE('%Y%m%d', DATE(SAFE.PARSE_DATETIME('%Y-%m-%d %H:%M:%S', h.order_date))) AS INT64) AS order_date_key,
         h.order_status,
         h.product_name AS raw_product_name,
-        h.product_name,
+        COALESCE(NULLIF(h.order_line_title, ''), h.product_name) AS product_name,
         CASE
-            WHEN LOWER(h.product_name) LIKE '%d2c summit%' THEN 'event'
-            WHEN LOWER(h.product_name) LIKE '%genai summit%' THEN 'event'
-            WHEN LOWER(h.product_name) LIKE '%fintech summit%' THEN 'event'
-            WHEN LOWER(h.product_name) LIKE '%startup leaders pass%' THEN 'event'
-            WHEN LOWER(h.product_name) LIKE '%enabler pass%' THEN 'event'
-            WHEN LOWER(h.product_name) LIKE '%investor pass%' THEN 'event'
-            WHEN LOWER(h.product_name) LIKE '%select pass%' THEN 'event'
-            WHEN LOWER(h.product_name) LIKE '%all access%' THEN 'event'
-            WHEN LOWER(h.product_name) LIKE '%growth pass%' THEN 'event'
-            WHEN LOWER(h.product_name) LIKE '%transfer pass%' THEN 'event'
-            WHEN LOWER(h.product_name) LIKE '%summit + workshop%' THEN 'event'
+            WHEN REGEXP_CONTAINS(LOWER(COALESCE(h.order_line_title, h.product_name)),
+                r'd2c summit|d2c day|d2c retreat|d2cx converge|genai summit|inc42 ai summit|ai summit by inc42|fintech summit|startup leaders pass|enabler pass|investor pass|select pass|all access|growth pass|transfer pass|summit \+ workshop|summit pass')
+            THEN 'event'
             ELSE 'other'
         END AS product_type,
         CAST(NULL AS STRING) AS membership_duration,
-        h.pass_type,
-        COALESCE(h.order_total, 0) AS order_total,
+        CAST(NULL AS STRING) AS pass_type,
+        SAFE_CAST(h.order_total AS NUMERIC) AS order_total,
         CAST(NULL AS NUMERIC) AS tax_total,
-        COALESCE(h.discount_amount, 0) AS discount_amount,
-        GREATEST(COALESCE(h.order_total, 0) - COALESCE(h.discount_amount, 0), 0) AS net_revenue,
-        COALESCE(h.refund_total, 0) AS refund_total,
+        CAST(0 AS NUMERIC) AS discount_amount,
+        GREATEST(SAFE_CAST(h.item_total AS NUMERIC), 0) AS net_revenue,
+        COALESCE(SAFE_CAST(h.refund_total AS NUMERIC), 0) AS refund_total,
         h.payment_method, h.currency,
         h.billing_company, h.billing_city, h.billing_state, h.billing_country,
         CAST(NULL AS STRING) AS billing_gst,
         CASE WHEN h.order_status = 'wc-completed' THEN 1 ELSE 0 END AS is_completed,
-        CASE WHEN h.order_status = 'wc-refunded' OR COALESCE(h.refund_total, 0) > 0 THEN 1 ELSE 0 END AS is_refunded,
+        CASE WHEN h.order_status = 'wc-refunded' OR SAFE_CAST(h.refund_total AS NUMERIC) > 0 THEN 1 ELSE 0 END AS is_refunded,
         CASE WHEN h.order_status = 'wc-cancelled' THEN 1 ELSE 0 END AS is_cancelled,
         CASE WHEN h.order_status IN ('wc-processing', 'wc-completed') THEN 1 ELSE 0 END AS is_successful
-    FROM {{ source('bronze', 'woo_events_historical') }} h
+    FROM {{ source('bronze', 'woo_events_full') }} h
     LEFT JOIN {{ ref('dim_contact') }} dc ON LOWER(TRIM(h.billing_email)) = LOWER(TRIM(dc.email))
     WHERE LOWER(COALESCE(h.billing_email, '')) NOT LIKE '%@inc42.com'
+      AND h.order_id IS NOT NULL
 )
 
 SELECT * FROM live_orders
