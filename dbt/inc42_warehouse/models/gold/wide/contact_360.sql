@@ -229,6 +229,8 @@ person_as_investor AS (
 -- FACT TABLE AGGREGATIONS
 -- ═══════════════════════════════════════════════
 orders AS (
+    -- Non-event orders only. Event tickets are sourced from silver.events
+    -- via the events_summary CTE below, so we don't double-count.
     SELECT
         contact_key,
         COUNT(*) AS total_orders,
@@ -241,29 +243,38 @@ orders AS (
         MAX(order_date_key) AS last_order_date_key,
         COUNTIF(product_type = 'membership') AS total_membership_orders,
         COUNTIF(product_type = 'addon') AS total_addon_orders,
-        -- Revenue split by product_type
         SUM(CASE WHEN product_type = 'membership' AND is_completed = 1 THEN net_revenue ELSE 0 END) AS total_membership_revenue,
-        -- Event-ticket aggregations (fed by bronze.woo_events_historical)
-        COUNTIF(product_type = 'event') AS total_event_orders,
-        SUM(CASE WHEN product_type = 'event' AND is_completed = 1 THEN net_revenue ELSE 0 END) AS total_event_revenue,
-        SUM(CASE WHEN product_type = 'event' AND (is_refunded = 1 OR COALESCE(refund_total, 0) > 0)
-                 THEN COALESCE(refund_total, net_revenue) ELSE 0 END) AS total_event_refunds,
-        STRING_AGG(DISTINCT CASE WHEN product_type = 'event' AND is_completed = 1 THEN pass_type END, ', ') AS event_passes_purchased,
-        STRING_AGG(DISTINCT CASE WHEN product_type = 'event' AND is_completed = 1 THEN product_name END, ', ') AS event_names_purchased,
         MAX(CASE WHEN is_completed = 1 THEN order_date_key END) AS last_completed_order_date_key
     FROM {{ ref('fact_orders') }}
     GROUP BY contact_key
 ),
 
-events AS (
+-- All event interactions sourced from silver.events (franchise-normalized,
+-- deduped by contact x franchise x edition x role). Replaces the old
+-- `events` CTE + event-specific fields in `orders`.
+events_summary AS (
     SELECT
         contact_key,
-        COUNT(*) AS total_events_registered,
-        SUM(is_active) AS total_events_active,
-        SUM(cancelled_flag) AS total_events_cancelled,
-        COUNTIF(event_type = 'event') AS total_events_attended,
-        COUNTIF(event_type = 'program') AS total_programs_joined
-    FROM {{ ref('fact_event_attendance') }}
+        COUNT(*) AS total_event_interactions,
+        COUNTIF(is_paid) AS total_paid_event_tickets,
+        COUNTIF(NOT is_paid) AS total_free_event_registrations,
+        COUNT(DISTINCT event_franchise) AS event_franchise_count,
+        COUNT(DISTINCT CONCAT(event_franchise, '|', IFNULL(event_edition,''))) AS distinct_franchise_editions,
+        STRING_AGG(DISTINCT event_franchise, ', ') AS event_franchises,
+        STRING_AGG(DISTINCT CASE WHEN is_paid THEN event_franchise END, ', ') AS paid_event_franchises,
+        STRING_AGG(DISTINCT CASE WHEN NOT is_paid THEN event_franchise END, ', ') AS free_event_franchises,
+        STRING_AGG(DISTINCT
+            CASE WHEN event_edition IS NOT NULL
+                 THEN CONCAT(event_franchise, ' ', event_edition)
+                 ELSE event_franchise
+            END, ', ') AS event_franchise_editions,
+        STRING_AGG(DISTINCT pass_tier, ', ') AS pass_tiers_purchased,
+        SUM(CASE WHEN is_paid AND attendance_status = 'paid' THEN net_revenue ELSE 0 END) AS total_event_revenue,
+        SUM(CASE WHEN attendance_status = 'refunded' THEN net_revenue ELSE 0 END) AS total_event_refunds,
+        COUNTIF(event_format = 'program') AS total_programs_joined,
+        STRING_AGG(DISTINCT CASE WHEN event_format = 'program' THEN event_franchise END, ', ') AS programs_joined,
+        MAX(interaction_date) AS last_event_interaction_date
+    FROM {{ ref('events') }}
     GROUP BY contact_key
 ),
 
@@ -365,37 +376,15 @@ properties AS (
 
     UNION ALL
 
-    -- Paid events purchased via WooCommerce (summit passes etc.)
+    -- Events + programs from silver.events (franchise-normalized, deduped).
+    -- property_name is the franchise (D2C Summit, GenAI Summit, FAST42, ...),
+    -- not the raw product/form name.
     SELECT DISTINCT contact_key,
-        product_name AS property_name,
-        'event' AS property_type,
-        TRUE AS is_paid
-    FROM {{ ref('fact_orders') }}
-    WHERE is_successful = 1
-      AND product_type = 'event'
-
-    UNION ALL
-
-    -- Events (D2C, AI Workshop, GenAI Summit, Webinars) — form registrations only
-    -- is_paid is always FALSE here: paid attendance comes from the WooCommerce
-    -- branch above. Form registration alone (application, RSVP, waitlist) does
-    -- not mean the person paid, even if the event category is normally ticketed.
-    SELECT DISTINCT contact_key,
-        event_name AS property_name,
-        'event' AS property_type,
-        FALSE AS is_paid
-    FROM {{ ref('fact_event_attendance') }}
-    WHERE event_type = 'event'
-
-    UNION ALL
-
-    -- Programs (FAST42, Startup Program, BrandLabs)
-    SELECT DISTINCT contact_key,
-        event_name AS property_name,
-        'program' AS property_type,
-        FALSE AS is_paid
-    FROM {{ ref('fact_event_attendance') }}
-    WHERE event_type = 'program'
+        event_franchise AS property_name,
+        CASE WHEN event_format = 'program' THEN 'program' ELSE 'event' END AS property_type,
+        is_paid
+    FROM {{ ref('events') }}
+    WHERE event_franchise IS NOT NULL
 
     UNION ALL
 
@@ -575,20 +564,26 @@ SELECT
     COALESCE(o.total_addon_orders, 0) AS total_addon_orders,
     COALESCE(o.total_membership_revenue, 0) AS total_membership_revenue,
 
-    -- ═══ EVENT TICKETS (from bronze.woo_events_historical) ═══
-    COALESCE(o.total_event_orders, 0) AS total_event_orders,
-    COALESCE(o.total_event_revenue, 0) AS total_event_revenue,
-    COALESCE(o.total_event_refunds, 0) AS total_event_refunds,
-    o.event_passes_purchased,
-    o.event_names_purchased,
+    -- ═══ EVENT TICKETS + REGISTRATIONS (sourced from silver.events) ═══
+    -- Franchise-normalized + deduped (one row per contact × franchise × edition × role).
+    COALESCE(es.total_paid_event_tickets, 0) AS total_event_orders,
+    COALESCE(es.total_event_revenue, 0) AS total_event_revenue,
+    COALESCE(es.total_event_refunds, 0) AS total_event_refunds,
+    es.pass_tiers_purchased AS event_passes_purchased,
+    es.paid_event_franchises AS event_names_purchased,
     SAFE.PARSE_DATE('%Y%m%d', CAST(o.last_completed_order_date_key AS STRING)) AS last_purchase_date,
 
-    -- ═══ EVENTS ═══
-    COALESCE(ev.total_events_registered, 0) AS total_events_registered,
-    COALESCE(ev.total_events_active, 0) AS total_events_active,
-    COALESCE(ev.total_events_cancelled, 0) AS total_events_cancelled,
-    COALESCE(ev.total_events_attended, 0) AS total_events_attended,
-    COALESCE(ev.total_programs_joined, 0) AS total_programs_joined,
+    COALESCE(es.total_free_event_registrations, 0) AS total_events_registered,
+    COALESCE(es.total_paid_event_tickets, 0) AS total_events_attended,
+    COALESCE(es.total_programs_joined, 0) AS total_programs_joined,
+    COALESCE(es.event_franchise_count, 0) AS event_franchise_count,
+    COALESCE(es.distinct_franchise_editions, 0) AS event_franchise_editions_count,
+    es.event_franchises,
+    es.paid_event_franchises,
+    es.free_event_franchises,
+    es.event_franchise_editions,
+    es.programs_joined,
+    es.last_event_interaction_date,
 
     -- ═══ FORMS ═══
     COALESCE(f.total_form_submissions, 0) AS total_form_submissions,
@@ -624,7 +619,8 @@ SELECT
     ROUND(
         COALESCE(m.total_emails_opened, 0) * 2.0
         + COALESCE(m.total_emails_clicked, 0) * 5.0
-        + COALESCE(ev.total_events_registered, 0) * 10.0
+        + COALESCE(es.total_free_event_registrations, 0) * 10.0
+        + COALESCE(es.total_paid_event_tickets, 0) * 20.0
         + COALESCE(f.total_form_submissions, 0) * 8.0
         + COALESCE(o.total_orders, 0) * 15.0
     , 1) AS engagement_score,
@@ -690,7 +686,7 @@ FROM contact c
 
 -- Fact aggregations
 LEFT JOIN orders o ON c.contact_key = o.contact_key
-LEFT JOIN events ev ON c.contact_key = ev.contact_key
+LEFT JOIN events_summary es ON c.contact_key = es.contact_key
 LEFT JOIN forms f ON c.contact_key = f.contact_key
 LEFT JOIN marketing m ON c.contact_key = m.contact_key
 LEFT JOIN property_agg p ON c.contact_key = p.contact_key
