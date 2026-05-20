@@ -684,15 +684,89 @@ SELECT
      + CASE WHEN c.markets_newsletter = 'subscribed' THEN 1 ELSE 0 END
     ) AS total_newsletters_subscribed,
 
-    -- ═══ ENGAGEMENT SCORE ═══
+    -- ═══ ENGAGEMENT SCORES ═══
+    -- Three scores per contact, designed for reverse-ETL segmentation:
+    --   paid_engagement_score    -> spending behaviour (memberships, paid events,
+    --                                addon orders, lifetime revenue)
+    --   nonpaid_engagement_score -> content/reach behaviour (newsletters, free
+    --                                event regs, reports, email opens/clicks,
+    --                                push reachability)
+    --   combined_engagement_score = paid * 2 + nonpaid  (paid weighted higher)
+    --   engagement_tier          -> dormant / passive / engaged / hot
     ROUND(
-        COALESCE(m.total_emails_opened, 0) * 2.0
-        + COALESCE(m.total_emails_clicked, 0) * 5.0
-        + COALESCE(es.total_free_event_registrations, 0) * 10.0
-        + COALESCE(es.total_paid_event_tickets, 0) * 20.0
-        + COALESCE(f.total_form_submissions, 0) * 8.0
-        + COALESCE(o.total_orders, 0) * 15.0
-    , 1) AS engagement_score,
+        COALESCE(o.total_membership_orders, 0) * 50.0
+        + COALESCE(es.total_paid_event_tickets, 0) * 30.0
+        + COALESCE(o.total_addon_orders, 0) * 20.0
+        + COALESCE(o.total_revenue, 0) * 0.001
+    , 1) AS paid_engagement_score,
+
+    ROUND(
+        (CASE WHEN c.daily_newsletter = 'subscribed' THEN 1 ELSE 0 END
+         + CASE WHEN c.weekly_newsletter = 'subscribed' THEN 1 ELSE 0 END
+         + CASE WHEN c.indepth_newsletter = 'subscribed' THEN 1 ELSE 0 END
+         + CASE WHEN c.moneyball_newsletter = 'subscribed' THEN 1 ELSE 0 END
+         + CASE WHEN c.theoutline_newsletter = 'subscribed' THEN 1 ELSE 0 END
+         + CASE WHEN c.markets_newsletter = 'subscribed' THEN 1 ELSE 0 END
+        ) * 10.0
+        + COALESCE(es.total_free_event_registrations, 0) * 8.0
+        + COALESCE(f.total_form_submissions, 0) * 3.0
+        + COALESCE(m.total_emails_opened, 0) * 0.5
+        + COALESCE(m.total_emails_clicked, 0) * 2.0
+        + CASE WHEN me.moengage_reachability_push IN ('300','100') THEN 5.0 ELSE 0 END
+    , 1) AS nonpaid_engagement_score,
+
+    ROUND(
+        (COALESCE(o.total_membership_orders, 0) * 50.0
+         + COALESCE(es.total_paid_event_tickets, 0) * 30.0
+         + COALESCE(o.total_addon_orders, 0) * 20.0
+         + COALESCE(o.total_revenue, 0) * 0.001) * 2.0
+        + (CASE WHEN c.daily_newsletter = 'subscribed' THEN 1 ELSE 0 END
+           + CASE WHEN c.weekly_newsletter = 'subscribed' THEN 1 ELSE 0 END
+           + CASE WHEN c.indepth_newsletter = 'subscribed' THEN 1 ELSE 0 END
+           + CASE WHEN c.moneyball_newsletter = 'subscribed' THEN 1 ELSE 0 END
+           + CASE WHEN c.theoutline_newsletter = 'subscribed' THEN 1 ELSE 0 END
+           + CASE WHEN c.markets_newsletter = 'subscribed' THEN 1 ELSE 0 END
+          ) * 10.0
+        + COALESCE(es.total_free_event_registrations, 0) * 8.0
+        + COALESCE(f.total_form_submissions, 0) * 3.0
+        + COALESCE(m.total_emails_opened, 0) * 0.5
+        + COALESCE(m.total_emails_clicked, 0) * 2.0
+        + CASE WHEN me.moengage_reachability_push IN ('300','100') THEN 5.0 ELSE 0 END
+    , 1) AS combined_engagement_score,
+
+    CASE
+        WHEN (COALESCE(o.total_membership_orders, 0) * 50.0
+              + COALESCE(es.total_paid_event_tickets, 0) * 30.0
+              + COALESCE(o.total_addon_orders, 0) * 20.0
+              + COALESCE(o.total_revenue, 0) * 0.001) >= 50
+          OR (COALESCE(es.total_free_event_registrations, 0) * 8.0
+              + COALESCE(f.total_form_submissions, 0) * 3.0
+              + COALESCE(m.total_emails_opened, 0) * 0.5
+              + COALESCE(m.total_emails_clicked, 0) * 2.0) >= 100
+        THEN 'hot'
+        WHEN (COALESCE(o.total_orders, 0) > 0
+              OR COALESCE(es.total_paid_event_tickets, 0) > 0
+              OR (CASE WHEN c.daily_newsletter='subscribed' THEN 1 ELSE 0 END
+                  + CASE WHEN c.weekly_newsletter='subscribed' THEN 1 ELSE 0 END
+                  + CASE WHEN c.indepth_newsletter='subscribed' THEN 1 ELSE 0 END
+                  + CASE WHEN c.moneyball_newsletter='subscribed' THEN 1 ELSE 0 END
+                  + CASE WHEN c.theoutline_newsletter='subscribed' THEN 1 ELSE 0 END
+                  + CASE WHEN c.markets_newsletter='subscribed' THEN 1 ELSE 0 END) >= 2
+              OR COALESCE(f.total_form_submissions, 0) >= 3
+              OR COALESCE(es.total_free_event_registrations, 0) >= 1)
+        THEN 'engaged'
+        WHEN (CASE WHEN c.daily_newsletter='subscribed' THEN 1 ELSE 0 END
+              + CASE WHEN c.weekly_newsletter='subscribed' THEN 1 ELSE 0 END
+              + CASE WHEN c.indepth_newsletter='subscribed' THEN 1 ELSE 0 END
+              + CASE WHEN c.moneyball_newsletter='subscribed' THEN 1 ELSE 0 END
+              + CASE WHEN c.theoutline_newsletter='subscribed' THEN 1 ELSE 0 END
+              + CASE WHEN c.markets_newsletter='subscribed' THEN 1 ELSE 0 END) >= 1
+          OR COALESCE(f.total_form_submissions, 0) >= 1
+          OR COALESCE(m.total_emails_opened, 0) >= 1
+          OR me.moengage_reachability_push IN ('300','100')
+        THEN 'passive'
+        ELSE 'dormant'
+    END AS engagement_tier,
 
     -- ═══ PROPERTY INTERACTIONS ═══
     COALESCE(p.total_properties_interacted, 0) AS total_properties_interacted,
