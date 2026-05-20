@@ -8,8 +8,9 @@
         WHEN {{ col }} IS NULL OR TRIM({{ col }}) = '' THEN NULL
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'd2cx[ _-]?converge') THEN 'D2CX Converge'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'd2c[ _-]?(summit|day|retreat|&[ _-]?retail|whatsapp videos)|d2c summit|the d2c') THEN 'D2C Summit'
-        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'inc42 ai summit|ai summit by inc42|ai-summit') THEN 'Inc42 AI Summit'
-        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'genai|gen ai') THEN 'GenAI Summit'
+        -- GenAI Summit franchise (rebranded to "Inc42 AI Summit" in 2026, but
+        -- continuation of the same event series, so we keep one franchise).
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'genai|gen ai|inc42 ai summit|ai summit by inc42|ai-summit') THEN 'GenAI Summit'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'fintech[ _-]?summit|fintech') THEN 'Fintech Summit'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'\bfast[ _-]?42\b') THEN 'FAST42'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'bigshift|big[ _-]shift') THEN 'BigShift'
