@@ -436,10 +436,10 @@ property_agg AS (
 event_interest_signals AS (
     SELECT
         e.contact_key,
-        BOOL_OR(e.event_franchise IN ('D2C Summit', 'D2CX Converge')) AS event_d2c,
-        BOOL_OR(e.event_franchise IN ('GenAI Summit', 'AI Workshop')) AS event_ai,
-        BOOL_OR(e.event_franchise = 'Fintech Summit') AS event_fintech,
-        BOOL_OR(e.event_franchise IN ('FAST42', 'Startup Programs', 'BigShift', 'Inc42 BrandLabs')) AS event_startup_program
+        LOGICAL_OR(e.event_franchise IN ('D2C Summit', 'D2CX Converge')) AS event_d2c,
+        LOGICAL_OR(e.event_franchise IN ('GenAI Summit', 'AI Workshop')) AS event_ai,
+        LOGICAL_OR(e.event_franchise = 'Fintech Summit') AS event_fintech,
+        LOGICAL_OR(e.event_franchise IN ('FAST42', 'Startup Programs', 'BigShift', 'Inc42 BrandLabs')) AS event_startup_program
     FROM {{ ref('events') }} e
     GROUP BY e.contact_key
 ),
@@ -447,14 +447,14 @@ event_interest_signals AS (
 report_interest_signals AS (
     SELECT
         contact_key,
-        BOOL_OR(form_subcategory IN ('D2C Report', 'Ecommerce Report', 'Consumer Internet Report')) AS report_d2c,
-        BOOL_OR(form_subcategory = 'Fintech Report') AS report_fintech,
-        BOOL_OR(form_subcategory IN (
+        LOGICAL_OR(form_subcategory IN ('D2C Report', 'Ecommerce Report', 'Consumer Internet Report')) AS report_d2c,
+        LOGICAL_OR(form_subcategory = 'Fintech Report') AS report_fintech,
+        LOGICAL_OR(form_subcategory IN (
             'IPO Report','Unicorn Report','Ebook - Angel Investors',
             'Guide - VC Funding','Guide - VC Funds','Top 100 Startups Report',
             'Startup Ecosystem Report','Guide - Accelerators','Guide - Govt Schemes'
         )) AS report_investor_startup,
-        BOOL_OR(form_subcategory = 'EV Giveaway') AS report_cleantech
+        LOGICAL_OR(form_subcategory = 'EV Giveaway') AS report_cleantech
     FROM {{ ref('fact_form_submissions') }}
     GROUP BY contact_key
 ),
