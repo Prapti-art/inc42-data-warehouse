@@ -436,7 +436,7 @@ property_agg AS (
 event_interest_signals AS (
     SELECT
         e.contact_key,
-        LOGICAL_OR(e.event_franchise IN ('D2C Summit', 'D2CX Converge')) AS event_d2c,
+        LOGICAL_OR(e.event_franchise IN ('D2C Summit', 'D2CX Converge', 'FAST42')) AS event_d2c,
         LOGICAL_OR(e.event_franchise IN ('GenAI Summit', 'AI Workshop')) AS event_ai,
         LOGICAL_OR(e.event_franchise = 'Fintech Summit') AS event_fintech,
         LOGICAL_OR(e.event_franchise IN ('FAST42', 'Startup Programs', 'BigShift', 'Inc42 BrandLabs')) AS event_startup_program
