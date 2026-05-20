@@ -10,7 +10,7 @@
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'd2c[ _-]?(summit|day|retreat|&[ _-]?retail|whatsapp videos)|d2c summit|the d2c') THEN 'D2C Summit'
         -- GenAI Summit franchise (rebranded to "Inc42 AI Summit" in 2026, but
         -- continuation of the same event series, so we keep one franchise).
-        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'genai|gen ai|inc42 ai summit|ai summit by inc42|ai-summit') THEN 'GenAI Summit'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'genai|gen ai|inc42 ai summit|ai summit by inc42|ai-summit|startup leaders pass') THEN 'GenAI Summit'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'fintech[ _-]?summit|fintech') THEN 'Fintech Summit'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'\bfast[ _-]?42\b') THEN 'FAST42'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'bigshift|big[ _-]shift') THEN 'BigShift'
@@ -20,10 +20,12 @@
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'moneyx|money x') THEN 'MoneyX'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'startup submissions|startup spotlight|startup deals|startup program') THEN 'Startup Programs'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'webinar|niti aayog|100x vc|covid') THEN 'Webinars'
+        -- Standalone D2C-exclusive pass SKUs (no event prefix in name).
+        -- These names + pricing are exclusive to D2C Summit at Inc42:
+        --   "Summit Pass" / "Summit + Workshop Pass" — D2C Summit 3.0 (2025) combo passes
+        --   "Select / Enabler / Transfer / Investor / All Access / Growth Pass" — historical D2C tiers
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'^(summit pass|summit \+ workshop pass|select|enabler|transfer|investor|all access|growth|team (select|enabler|investor|all access|growth))( pass| pass\s*-)?\b') THEN 'D2C Summit'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'summit') THEN 'Other Summits'
-        -- Last-resort: standalone D2C Summit pass SKUs (no event prefix in name).
-        -- These tier names are exclusive to D2C Summit at Inc42.
-        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'^(select|enabler|transfer|investor|all access|growth|team (select|enabler|investor|all access|growth))( pass| pass\s*-)?\b') THEN 'D2C Summit'
         ELSE 'Other Events'
     END
 {% endmacro %}
