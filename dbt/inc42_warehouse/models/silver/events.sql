@@ -88,23 +88,26 @@ deduped AS (
 
 SELECT
     TO_HEX(MD5(CONCAT(
-        CAST(contact_key AS STRING), '|',
-        COALESCE(event_franchise, 'unknown'), '|',
-        COALESCE(event_edition, ''), '|',
-        COALESCE(event_role, 'registrant')
+        CAST(d.contact_key AS STRING), '|',
+        COALESCE(d.event_franchise, 'unknown'), '|',
+        COALESCE(d.event_edition, ''), '|',
+        COALESCE(d.event_role, 'registrant')
     ))) AS event_key,
-    contact_key,
-    event_franchise,
-    event_edition,
-    event_format,
-    event_role,
-    is_paid,
-    pass_tier,
-    pass_type_original,
-    net_revenue,
-    attendance_status,
-    interaction_date,
-    event_name_original,
+    d.contact_key,
+    c.unified_contact_id,
+    c.email,
+    d.event_franchise,
+    d.event_edition,
+    d.event_format,
+    d.event_role,
+    d.is_paid,
+    d.pass_tier,
+    d.pass_type_original,
+    d.net_revenue,
+    d.attendance_status,
+    d.interaction_date,
+    d.event_name_original,
     CURRENT_TIMESTAMP() AS updated_at
-FROM deduped
-WHERE rn = 1
+FROM deduped d
+LEFT JOIN {{ ref('dim_contact') }} c USING (contact_key)
+WHERE d.rn = 1
