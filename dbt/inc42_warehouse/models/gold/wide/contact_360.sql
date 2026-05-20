@@ -426,31 +426,73 @@ property_agg AS (
 ),
 
 -- ═══════════════════════════════════════════════
--- INTEREST TAGS (based on interactions)
+-- INTEREST TAGS — signals merged from 4 sources:
+--   (a) Event franchise touched (silver.events)
+--   (b) Reports / Giveaways downloaded (fact_form_submissions)
+--   (c) Newsletter subscriptions (contact.X_newsletter)
+--   (d) Company sector (Datalabs sector_thesis)
+-- Each interest is TRUE if ANY source signals it.
 -- ═══════════════════════════════════════════════
-interest_tags AS (
+event_interest_signals AS (
+    SELECT
+        e.contact_key,
+        BOOL_OR(e.event_franchise IN ('D2C Summit', 'D2CX Converge')) AS event_d2c,
+        BOOL_OR(e.event_franchise IN ('GenAI Summit', 'AI Workshop')) AS event_ai,
+        BOOL_OR(e.event_franchise = 'Fintech Summit') AS event_fintech,
+        BOOL_OR(e.event_franchise IN ('FAST42', 'Startup Programs', 'BigShift', 'Inc42 BrandLabs')) AS event_startup_program
+    FROM {{ ref('events') }} e
+    GROUP BY e.contact_key
+),
+
+report_interest_signals AS (
     SELECT
         contact_key,
-        -- D2C interest: attended D2C events OR downloaded D2C reports OR D2C in form_category
-        MAX(CASE WHEN form_category IN ('D2C Event') OR form_subcategory LIKE '%D2C%' THEN TRUE ELSE FALSE END) AS interest_d2c,
-
-        -- AI interest: AI Workshop, GenAI Summit, AI Tracker
-        MAX(CASE WHEN form_category IN ('AI Workshop', 'GenAI Summit') OR form_name LIKE '%AI%' OR form_name LIKE '%GenAI%' THEN TRUE ELSE FALSE END) AS interest_ai,
-
-        -- Fintech interest: downloaded fintech reports
-        MAX(CASE WHEN form_subcategory LIKE '%Fintech%' THEN TRUE ELSE FALSE END) AS interest_fintech,
-
-        -- Ecommerce interest
-        MAX(CASE WHEN form_subcategory LIKE '%Ecommerce%' OR form_subcategory LIKE '%Consumer Internet%' THEN TRUE ELSE FALSE END) AS interest_ecommerce,
-
-        -- Startup ecosystem: startup submissions, FAST42, BigShift, reports
-        MAX(CASE WHEN form_category IN ('FAST42', 'Startup Program') OR form_subcategory LIKE '%Funding%' OR form_subcategory LIKE '%Startup Ecosystem%' THEN TRUE ELSE FALSE END) AS interest_startups,
-
-        -- Investor content: VC guides, angel investor ebooks
-        MAX(CASE WHEN form_subcategory LIKE '%VC%' OR form_subcategory LIKE '%Angel%' OR form_category = 'Giveaway' THEN TRUE ELSE FALSE END) AS interest_investor_content
-
+        BOOL_OR(form_subcategory IN ('D2C Report', 'Ecommerce Report', 'Consumer Internet Report')) AS report_d2c,
+        BOOL_OR(form_subcategory = 'Fintech Report') AS report_fintech,
+        BOOL_OR(form_subcategory IN (
+            'IPO Report','Unicorn Report','Ebook - Angel Investors',
+            'Guide - VC Funding','Guide - VC Funds','Top 100 Startups Report',
+            'Startup Ecosystem Report','Guide - Accelerators','Guide - Govt Schemes'
+        )) AS report_investor_startup,
+        BOOL_OR(form_subcategory = 'EV Giveaway') AS report_cleantech
     FROM {{ ref('fact_form_submissions') }}
     GROUP BY contact_key
+),
+
+contact_sectors AS (
+    SELECT
+        c.contact_key,
+        LOWER(COALESCE(cst.inc42_sub_sectors, cst.inc42_sectors, '')) AS sectors_lower
+    FROM contact c
+    LEFT JOIN company_match cm ON LOWER(TRIM(c.company_name)) = cm.company_name_lower
+    LEFT JOIN company_sector_thesis cst ON cm.company_uuid = cst.company_uuid
+),
+
+interest_tags AS (
+    SELECT
+        cs.contact_key,
+        COALESCE(es.event_d2c, FALSE) OR COALESCE(rs.report_d2c, FALSE)
+            OR REGEXP_CONTAINS(cs.sectors_lower, r'ecommerce|foodtech|consumer services|consumer internet|d2c') AS interest_d2c,
+        COALESCE(es.event_ai, FALSE)
+            OR REGEXP_CONTAINS(cs.sectors_lower, r'\bai\b|machine learning|gen ai|deeptech') AS interest_ai,
+        COALESCE(es.event_fintech, FALSE) OR COALESCE(rs.report_fintech, FALSE)
+            OR REGEXP_CONTAINS(cs.sectors_lower, r'fintech') AS interest_fintech,
+        REGEXP_CONTAINS(cs.sectors_lower, r'enterprise tech|saas') AS interest_saas_enterprise,
+        REGEXP_CONTAINS(cs.sectors_lower, r'health tech|healthtech') AS interest_healthtech,
+        REGEXP_CONTAINS(cs.sectors_lower, r'edtech|ed tech') AS interest_edtech,
+        COALESCE(rs.report_cleantech, FALSE)
+            OR REGEXP_CONTAINS(cs.sectors_lower, r'clean tech|cleantech|ev|electric vehicle') AS interest_cleantech,
+        REGEXP_CONTAINS(cs.sectors_lower, r'agritech|agri tech') AS interest_agritech,
+        REGEXP_CONTAINS(cs.sectors_lower, r'logistics|mobility') AS interest_logistics_mobility,
+        REGEXP_CONTAINS(cs.sectors_lower, r'travel tech|traveltech') AS interest_traveltech,
+        REGEXP_CONTAINS(cs.sectors_lower, r'real estate tech|proptech') AS interest_realestatetech,
+        REGEXP_CONTAINS(cs.sectors_lower, r'web3|blockchain|crypto') AS interest_web3,
+        REGEXP_CONTAINS(cs.sectors_lower, r'media & entertainment|gaming') AS interest_media_gaming,
+        COALESCE(es.event_startup_program, FALSE) AS interest_startups_program,
+        COALESCE(rs.report_investor_startup, FALSE) AS interest_investor_content
+    FROM contact_sectors cs
+    LEFT JOIN event_interest_signals es USING(contact_key)
+    LEFT JOIN report_interest_signals rs USING(contact_key)
 )
 
 -- ═══════════════════════════════════════════════
@@ -642,13 +684,22 @@ SELECT
     p.program_names,
     COALESCE(p.content_properties, 0) AS content_properties,
 
-    -- ═══ INTEREST TAGS ═══
-    COALESCE(it.interest_d2c, FALSE) AS interest_d2c,
+    -- ═══ INTEREST TAGS (signals: events + reports + sectors + newsletters) ═══
+    COALESCE(it.interest_d2c, FALSE) OR c.moneyball_newsletter = 'subscribed' AS interest_d2c,
     COALESCE(it.interest_ai, FALSE) AS interest_ai,
-    COALESCE(it.interest_fintech, FALSE) AS interest_fintech,
-    COALESCE(it.interest_ecommerce, FALSE) AS interest_ecommerce,
-    COALESCE(it.interest_startups, FALSE) AS interest_startups,
-    COALESCE(it.interest_investor_content, FALSE) AS interest_investor_content,
+    COALESCE(it.interest_fintech, FALSE) OR c.markets_newsletter = 'subscribed' AS interest_fintech,
+    COALESCE(it.interest_saas_enterprise, FALSE) AS interest_saas_enterprise,
+    COALESCE(it.interest_healthtech, FALSE) AS interest_healthtech,
+    COALESCE(it.interest_edtech, FALSE) AS interest_edtech,
+    COALESCE(it.interest_cleantech, FALSE) AS interest_cleantech,
+    COALESCE(it.interest_agritech, FALSE) AS interest_agritech,
+    COALESCE(it.interest_logistics_mobility, FALSE) AS interest_logistics_mobility,
+    COALESCE(it.interest_traveltech, FALSE) AS interest_traveltech,
+    COALESCE(it.interest_realestatetech, FALSE) AS interest_realestatetech,
+    COALESCE(it.interest_web3, FALSE) AS interest_web3,
+    COALESCE(it.interest_media_gaming, FALSE) AS interest_media_gaming,
+    COALESCE(it.interest_startups_program, FALSE) AS interest_startups_program,
+    COALESCE(it.interest_investor_content, FALSE) OR c.markets_newsletter = 'subscribed' AS interest_investor_content,
 
     -- ═══ MOENGAGE ENGAGEMENT (reachability + sessions/LTV) ═══
     me.moengage_first_seen,
