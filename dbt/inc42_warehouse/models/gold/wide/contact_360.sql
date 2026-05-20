@@ -494,27 +494,29 @@ interest_tags AS (
         COALESCE(es.event_fintech, FALSE) OR COALESCE(rs.report_fintech, FALSE)
             OR REGEXP_CONTAINS(cs.sectors_lower, r'fintech') AS interest_fintech,
         COALESCE(rs.report_saas_enterprise, FALSE)
-            OR REGEXP_CONTAINS(cs.sectors_lower, r'enterprise tech|saas') AS interest_saas_enterprise,
+            OR REGEXP_CONTAINS(cs.sectors_lower, r'enterprise tech|saas') AS interest_enterprise_tech,
         COALESCE(rs.report_healthtech, FALSE)
-            OR REGEXP_CONTAINS(cs.sectors_lower, r'health tech|healthtech') AS interest_healthtech,
+            OR REGEXP_CONTAINS(cs.sectors_lower, r'health tech|healthtech') AS interest_health_tech,
         COALESCE(rs.report_edtech, FALSE)
             OR REGEXP_CONTAINS(cs.sectors_lower, r'edtech|ed tech') AS interest_edtech,
         COALESCE(rs.report_cleantech, FALSE)
-            OR REGEXP_CONTAINS(cs.sectors_lower, r'clean tech|cleantech|ev|electric vehicle') AS interest_cleantech,
+            OR REGEXP_CONTAINS(cs.sectors_lower, r'clean tech|cleantech|ev|electric vehicle') AS interest_clean_tech,
         COALESCE(rs.report_agritech, FALSE)
             OR REGEXP_CONTAINS(cs.sectors_lower, r'agritech|agri tech') AS interest_agritech,
         COALESCE(rs.report_logistics_mobility, FALSE)
-            OR REGEXP_CONTAINS(cs.sectors_lower, r'logistics|mobility') AS interest_logistics_mobility,
+            OR REGEXP_CONTAINS(cs.sectors_lower, r'logistics|mobility') AS interest_logistics,
         COALESCE(rs.report_traveltech, FALSE)
-            OR REGEXP_CONTAINS(cs.sectors_lower, r'travel tech|traveltech') AS interest_traveltech,
+            OR REGEXP_CONTAINS(cs.sectors_lower, r'travel tech|traveltech') AS interest_travel_tech,
         COALESCE(rs.report_realestatetech, FALSE)
-            OR REGEXP_CONTAINS(cs.sectors_lower, r'real estate tech|proptech') AS interest_realestatetech,
+            OR REGEXP_CONTAINS(cs.sectors_lower, r'real estate tech|proptech') AS interest_real_estate_tech,
         COALESCE(rs.report_web3, FALSE)
             OR REGEXP_CONTAINS(cs.sectors_lower, r'web3|blockchain|crypto') AS interest_web3,
         COALESCE(rs.report_media_gaming, FALSE)
-            OR REGEXP_CONTAINS(cs.sectors_lower, r'media & entertainment|gaming') AS interest_media_gaming,
-        COALESCE(es.event_startup_program, FALSE) AS interest_startups_program,
-        COALESCE(rs.report_investor_startup, FALSE) AS interest_investor_content
+            OR REGEXP_CONTAINS(cs.sectors_lower, r'media & entertainment|gaming') AS interest_media_entertainment,
+        -- Startup Ecosystem (merged: FAST42/BigShift/BrandLabs/Startup Programs events +
+        -- IPO/Unicorn/Funding/Angel/VC/Govt Schemes/Accelerators reports).
+        COALESCE(es.event_startup_program, FALSE)
+            OR COALESCE(rs.report_investor_startup, FALSE) AS interest_startup_ecosystem
     FROM contact_sectors cs
     LEFT JOIN event_interest_signals es USING(contact_key)
     LEFT JOIN report_interest_signals rs USING(contact_key)
@@ -709,28 +711,26 @@ SELECT
     p.program_names,
     COALESCE(p.content_properties, 0) AS content_properties,
 
-    -- ═══ INTEREST TAGS (signals: events + reports + sectors + newsletters) ═══
-    -- Newsletter mappings:
-    --   moneyball -> Inc42's startup-funding/markets newsletter -> investor_content
-    --   markets   -> financial markets newsletter -> investor_content + fintech
-    --   theoutline -> D2C / consumer-brands newsletter -> d2c
+    -- ═══ INTEREST TAGS (Inc42 sector nomenclature) ═══
+    -- Signals: silver.events franchise + fact_form_submissions (Reports/Giveaways
+    -- by subcategory + form_name keywords) + Datalabs sector + newsletter subs.
+    -- Newsletters: theoutline -> d2c; moneyball+markets -> startup_ecosystem.
     COALESCE(it.interest_d2c, FALSE) OR c.theoutline_newsletter = 'subscribed' AS interest_d2c,
     COALESCE(it.interest_ai, FALSE) AS interest_ai,
-    COALESCE(it.interest_fintech, FALSE) OR c.markets_newsletter = 'subscribed' AS interest_fintech,
-    COALESCE(it.interest_saas_enterprise, FALSE) AS interest_saas_enterprise,
-    COALESCE(it.interest_healthtech, FALSE) AS interest_healthtech,
+    COALESCE(it.interest_fintech, FALSE) AS interest_fintech,
+    COALESCE(it.interest_enterprise_tech, FALSE) AS interest_enterprise_tech,
+    COALESCE(it.interest_health_tech, FALSE) AS interest_health_tech,
     COALESCE(it.interest_edtech, FALSE) AS interest_edtech,
-    COALESCE(it.interest_cleantech, FALSE) AS interest_cleantech,
+    COALESCE(it.interest_clean_tech, FALSE) AS interest_clean_tech,
     COALESCE(it.interest_agritech, FALSE) AS interest_agritech,
-    COALESCE(it.interest_logistics_mobility, FALSE) AS interest_logistics_mobility,
-    COALESCE(it.interest_traveltech, FALSE) AS interest_traveltech,
-    COALESCE(it.interest_realestatetech, FALSE) AS interest_realestatetech,
+    COALESCE(it.interest_logistics, FALSE) AS interest_logistics,
+    COALESCE(it.interest_travel_tech, FALSE) AS interest_travel_tech,
+    COALESCE(it.interest_real_estate_tech, FALSE) AS interest_real_estate_tech,
     COALESCE(it.interest_web3, FALSE) AS interest_web3,
-    COALESCE(it.interest_media_gaming, FALSE) AS interest_media_gaming,
-    COALESCE(it.interest_startups_program, FALSE) AS interest_startups_program,
-    COALESCE(it.interest_investor_content, FALSE)
+    COALESCE(it.interest_media_entertainment, FALSE) AS interest_media_entertainment,
+    COALESCE(it.interest_startup_ecosystem, FALSE)
         OR c.moneyball_newsletter = 'subscribed'
-        OR c.markets_newsletter = 'subscribed' AS interest_investor_content,
+        OR c.markets_newsletter = 'subscribed' AS interest_startup_ecosystem,
 
     -- ═══ MOENGAGE ENGAGEMENT (reachability + sessions/LTV) ═══
     me.moengage_first_seen,
