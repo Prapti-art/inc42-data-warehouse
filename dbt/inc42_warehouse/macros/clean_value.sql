@@ -124,23 +124,33 @@
    Researcher, Consultant. Garbage / "Other" -> NULL.
    ────────────────────────────────────────────────────────────────── #}
 {% macro normalize_seniority(col) %}
+    -- Closed enum: only these 15 values are emitted. Anything else -> NULL.
+    --   Founder, C-Suite, VP/Director, Senior, Manager, Associate, Junior,
+    --   Intern, Student, Investor, Partner, Researcher, Consultant,
+    --   Government, Startup Enthusiast
     CASE
         WHEN {{ scrub_sentinel(col) }} IS NULL THEN NULL
-        WHEN LOWER(TRIM({{ col }})) IN ('other','others','none','n/a','na') THEN NULL
+        WHEN LOWER(TRIM({{ col }})) IN (
+            'other','others','none','n/a','na','yes','no','high','top','nn','c','md','management'
+        ) THEN NULL
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'^\d+([.,]\d+)?(\s*(years?|yrs))?\s*$') THEN NULL
+        WHEN REGEXP_CONTAINS(TRIM({{ col }}), r'^\[.*\]$') THEN NULL
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'founder|owner|promoter') THEN 'Founder'
-        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'\bceo\b|\bcfo\b|\bcto\b|\bcoo\b|\bcmo\b|\bcpo\b|\bchro\b|\bcxo\b|c-?suite|c-?level|chief|president\b|leadership|senior[ _-]management|senior[ _-]leadership') THEN 'C-Suite'
-        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'\bvp\b|vice president|director|general manager|\bgm\b|head of|head -') THEN 'VP/Director'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'\bceo\b|\bcfo\b|\bcto\b|\bcoo\b|\bcmo\b|\bcpo\b|\bchro\b|\bcxo\b|\bcxos\b|c-?suite|c-?level|chief|president\b|leadership|top[ _-]?management|senior[ _-]?management|senior[ _-]?leadership') THEN 'C-Suite'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'\bvp\b|vpsenior|vice president|director|general manager|\bgm\b|head of|head -') THEN 'VP/Director'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'senior manager|sr\.? manager|senior_associate') THEN 'Senior'
-        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'manager|middle[ _-]management') THEN 'Manager'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'manager|middle[ _-]?management|mid[ _-]?level[ _-]?management') THEN 'Manager'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'analyst|associate') THEN 'Associate'
-        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'junior|jr\.?|trainee|fresher') THEN 'Junior'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'junior|jr\.?|trainee|fresher|entry[ _-]?level') THEN 'Junior'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'intern\b|internship') THEN 'Intern'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'student|undergrad|graduate student') THEN 'Student'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'investor|venture|angel') THEN 'Investor'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'\bpartner\b') THEN 'Partner'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'researcher|academic|journalist|professor|faculty') THEN 'Researcher'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'consultant|advisor|advisory') THEN 'Consultant'
-        ELSE INITCAP(REGEXP_REPLACE(LOWER(TRIM({{ col }})), r'[_-]+', ' '))
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'government|policy[ _-]?maker') THEN 'Government'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'startup enthusiast|enthusiast') THEN 'Startup Enthusiast'
+        ELSE NULL
     END
 {% endmacro %}
 

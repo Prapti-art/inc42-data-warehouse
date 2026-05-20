@@ -537,8 +537,17 @@ SELECT
 
     -- ═══ PROFESSIONAL ═══
     c.company_name,
-    COALESCE(c.designation, pe.job_title) AS designation,
+    -- Drop designation values that are just the company name extracted from
+    -- the email domain (e.g. designation="Acciojob" for yash@acciojob.com).
+    -- Fall back to Datalabs job_title in that case.
+    CASE
+        WHEN LENGTH(COALESCE(c.designation, '')) > 1
+            AND LOWER(TRIM(c.designation)) = LOWER(REGEXP_EXTRACT(c.email, r'@([^.]+)'))
+        THEN pe.job_title
+        ELSE COALESCE(c.designation, pe.job_title)
+    END AS designation,
     COALESCE(c.seniority, {{ normalize_seniority('CAST(pe.job_seniority AS STRING)') }}) AS seniority,
+    c.company_function,  -- Inc42 onboarding dropdown (15 canonical values) — separate from designation
     {{ normalize_job_function('pe.job_function') }} AS job_function,
     c.linkedin_url,
     c.city,
