@@ -12,37 +12,33 @@ WITH free_registrations AS (
         event_name AS event_name_original,
         {{ event_franchise('event_name') }} AS event_franchise,
         {{ event_format('event_name') }} AS event_format,
-        {{ event_edition('event_name') }} AS event_edition,
         {{ event_role('event_name') }} AS event_role,
         FALSE AS is_paid,
         CAST(NULL AS STRING) AS pass_tier,
         CAST(NULL AS STRING) AS pass_type_original,
         CAST(0 AS NUMERIC) AS net_revenue,
         SAFE.PARSE_DATE('%Y%m%d', CAST(NULLIF(reg_date_key, 0) AS STRING)) AS interaction_date,
-        'form_registration' AS source_type,
         'registered' AS attendance_status
     FROM {{ ref('fact_event_attendance') }}
     WHERE event_name IS NOT NULL AND TRIM(event_name) != ''
 ),
 
 paid_tickets AS (
+    -- NOTE: Standalone pass SKUs (Select/Enabler/Transfer/Investor/All Access/
+    -- Startup Leaders Pass with no event prefix in product_name) are classified
+    -- as D2C Summit in the event_franchise macro. These tier names are exclusive
+    -- to D2C Summit at Inc42 — other summits use distinct pass naming.
     SELECT
         contact_key,
         product_name AS event_name_original,
         {{ event_franchise('product_name') }} AS event_franchise,
         COALESCE({{ event_format('product_name') }}, 'summit') AS event_format,
-        -- Fall back to order-year when product_name has no edition (pass-only SKUs)
-        COALESCE(
-            {{ event_edition('product_name') }},
-            CAST(EXTRACT(YEAR FROM SAFE.PARSE_DATE('%Y%m%d', CAST(NULLIF(order_date_key, 0) AS STRING))) AS STRING)
-        ) AS event_edition,
         'attendee' AS event_role,
         TRUE AS is_paid,
         {{ pass_tier('pass_type') }} AS pass_tier,
         pass_type AS pass_type_original,
         CAST(COALESCE(net_revenue, 0) AS NUMERIC) AS net_revenue,
         SAFE.PARSE_DATE('%Y%m%d', CAST(NULLIF(order_date_key, 0) AS STRING)) AS interaction_date,
-        'paid_ticket' AS source_type,
         CASE
             WHEN is_completed = 1 THEN 'paid'
             WHEN is_refunded = 1 THEN 'refunded'
@@ -57,6 +53,15 @@ unioned AS (
     SELECT * FROM free_registrations
     UNION ALL
     SELECT * FROM paid_tickets
+),
+
+-- Derive event_edition from interaction_date year (single source of truth).
+-- Free regs and paid tickets both happen in the year the event runs (or its
+-- pre-event signup window), so interaction_date year is the reliable edition.
+with_edition AS (
+    SELECT *,
+        CAST(EXTRACT(YEAR FROM interaction_date) AS STRING) AS event_edition
+    FROM unioned
 ),
 
 -- One row per (contact, franchise, edition, role).
@@ -78,7 +83,7 @@ deduped AS (
                 END,
                 interaction_date DESC NULLS LAST
         ) AS rn
-    FROM unioned
+    FROM with_edition
 )
 
 SELECT
@@ -99,7 +104,6 @@ SELECT
     net_revenue,
     attendance_status,
     interaction_date,
-    source_type,
     event_name_original,
     CURRENT_TIMESTAMP() AS updated_at
 FROM deduped
