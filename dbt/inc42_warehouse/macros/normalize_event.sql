@@ -8,6 +8,8 @@
         WHEN {{ col }} IS NULL OR TRIM({{ col }}) = '' THEN NULL
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'd2cx[ _-]?converge') THEN 'D2CX Converge'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'd2c[ _-]?(summit|day|retreat|&[ _-]?retail|whatsapp videos)|d2c summit|the d2c') THEN 'D2C Summit'
+        -- Standalone D2C Summit pass SKUs (product_name has no event prefix)
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'^(select|enabler|transfer|investor|all access|startup leaders|team (select|enabler|investor|all access))( pass| pass\s*-)?\b') THEN 'D2C Summit'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'genai|gen ai') THEN 'GenAI Summit'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'fintech[ _-]?summit|fintech') THEN 'Fintech Summit'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'\bfast[ _-]?42\b') THEN 'FAST42'

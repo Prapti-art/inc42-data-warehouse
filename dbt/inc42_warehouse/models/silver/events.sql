@@ -30,8 +30,12 @@ paid_tickets AS (
         contact_key,
         product_name AS event_name_original,
         {{ event_franchise('product_name') }} AS event_franchise,
-        {{ event_format('product_name') }} AS event_format,
-        {{ event_edition('product_name') }} AS event_edition,
+        COALESCE({{ event_format('product_name') }}, 'summit') AS event_format,
+        -- Fall back to order-year when product_name has no edition (pass-only SKUs)
+        COALESCE(
+            {{ event_edition('product_name') }},
+            CAST(EXTRACT(YEAR FROM SAFE.PARSE_DATE('%Y%m%d', CAST(NULLIF(order_date_key, 0) AS STRING))) AS STRING)
+        ) AS event_edition,
         'attendee' AS event_role,
         TRUE AS is_paid,
         {{ pass_tier('pass_type') }} AS pass_tier,
