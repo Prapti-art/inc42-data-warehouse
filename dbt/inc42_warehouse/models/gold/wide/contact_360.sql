@@ -547,7 +547,6 @@ SELECT
         ELSE COALESCE(c.designation, pe.job_title)
     END AS designation,
     COALESCE(c.seniority, {{ normalize_seniority('CAST(pe.job_seniority AS STRING)') }}) AS seniority,
-    c.company_function,  -- Inc42 onboarding dropdown (15 canonical values) — separate from designation
     {{ normalize_job_function('pe.job_function') }} AS job_function,
     c.linkedin_url,
     c.city,
