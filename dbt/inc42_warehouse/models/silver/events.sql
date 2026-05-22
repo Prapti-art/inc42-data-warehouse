@@ -34,7 +34,9 @@ paid_tickets AS (
         {{ event_franchise('product_name') }} AS event_franchise,
         COALESCE({{ event_format('product_name') }}, 'summit') AS event_format,
         'attendee' AS event_role,
-        TRUE AS is_paid,
+        -- is_paid TRUE only when money actually changed hands (paid or refunded).
+        -- pending / cancelled orders had no payment, so is_paid = FALSE.
+        CASE WHEN is_completed = 1 OR is_refunded = 1 THEN TRUE ELSE FALSE END AS is_paid,
         {{ pass_tier('pass_type') }} AS pass_tier,
         pass_type AS pass_type_original,
         CAST(COALESCE(net_revenue, 0) AS NUMERIC) AS net_revenue,
