@@ -268,13 +268,6 @@ events_summary AS (
                  THEN CONCAT(event_franchise, ' ', event_edition)
                  ELSE event_franchise
             END, ', ') AS event_franchise_editions,
-        -- Year-bearing paid vs free split (e.g. "D2C Summit 2021, D2C Summit 2023").
-        -- Paid wins over free for the same (franchise, year) upstream in silver.events,
-        -- so a name appears in at most one of these two lists.
-        STRING_AGG(DISTINCT CASE WHEN is_paid
-            THEN CONCAT(event_franchise, ' ', IFNULL(event_edition, '')) END, ', ') AS paid_event_names,
-        STRING_AGG(DISTINCT CASE WHEN NOT is_paid
-            THEN CONCAT(event_franchise, ' ', IFNULL(event_edition, '')) END, ', ') AS free_event_names,
         -- Loyalty / recency (numeric editions only — regional editions like "Hyderabad" excluded)
         MIN(SAFE_CAST(event_edition AS INT64)) AS first_event_year,
         MAX(SAFE_CAST(event_edition AS INT64)) AS last_event_year,
@@ -285,6 +278,35 @@ events_summary AS (
         STRING_AGG(DISTINCT CASE WHEN event_format = 'program' THEN event_franchise END, ', ') AS programs_joined,
         MAX(interaction_date) AS last_event_interaction_date
     FROM {{ ref('events') }}
+    GROUP BY contact_key
+),
+
+-- Collapse silver.events to one row per (contact, franchise, year) BEFORE the
+-- paid/free split, so "paid wins" holds at the name-list level. Without this,
+-- a person who registered (free, role='registrant') AND paid (role='attendee')
+-- for the same summit-year would have the event appear in BOTH lists.
+event_year_grain AS (
+    SELECT
+        contact_key,
+        event_franchise,
+        event_edition,
+        LOGICAL_OR(is_paid) AS any_paid
+    FROM {{ ref('events') }}
+    WHERE event_franchise IS NOT NULL
+    GROUP BY contact_key, event_franchise, event_edition
+),
+
+event_names_clean AS (
+    SELECT
+        contact_key,
+        STRING_AGG(DISTINCT CASE WHEN any_paid
+            THEN CONCAT(event_franchise, ' ', IFNULL(event_edition, '')) END, ', ') AS paid_event_names,
+        STRING_AGG(DISTINCT CASE WHEN NOT any_paid
+            THEN CONCAT(event_franchise, ' ', IFNULL(event_edition, '')) END, ', ') AS free_event_names,
+        COUNTIF(any_paid) AS total_paid_events,
+        COUNTIF(NOT any_paid) AS total_free_events,
+        COUNT(*) AS total_events_engaged
+    FROM event_year_grain
     GROUP BY contact_key
 ),
 
@@ -665,9 +687,12 @@ SELECT
     COALESCE(es.distinct_franchise_editions, 0) AS event_franchise_editions_count,
     es.event_franchises,
     -- Year-bearing event lists (paid wins over free per franchise+year)
-    es.paid_event_names,
-    es.free_event_names,
+    enc.paid_event_names,
+    enc.free_event_names,
     es.event_franchise_editions AS all_event_names,
+    COALESCE(enc.total_paid_events, 0) AS total_paid_events,
+    COALESCE(enc.total_free_events, 0) AS total_free_events,
+    COALESCE(enc.total_events_engaged, 0) AS total_events_engaged,
     -- Franchise-only rollups (kept for franchise-level filtering)
     es.paid_event_franchises,
     es.free_event_franchises,
@@ -867,6 +892,7 @@ FROM contact c
 -- Fact aggregations
 LEFT JOIN orders o ON c.contact_key = o.contact_key
 LEFT JOIN events_summary es ON c.contact_key = es.contact_key
+LEFT JOIN event_names_clean enc ON c.contact_key = enc.contact_key
 LEFT JOIN forms f ON c.contact_key = f.contact_key
 LEFT JOIN marketing m ON c.contact_key = m.contact_key
 LEFT JOIN property_agg p ON c.contact_key = p.contact_key
