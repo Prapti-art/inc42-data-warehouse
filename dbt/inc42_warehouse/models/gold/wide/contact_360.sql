@@ -261,13 +261,6 @@ events_summary AS (
         COUNT(DISTINCT event_franchise) AS event_franchise_count,
         COUNT(DISTINCT CONCAT(event_franchise, '|', IFNULL(event_edition,''))) AS distinct_franchise_editions,
         STRING_AGG(DISTINCT event_franchise, ', ') AS event_franchises,
-        STRING_AGG(DISTINCT CASE WHEN is_paid THEN event_franchise END, ', ') AS paid_event_franchises,
-        STRING_AGG(DISTINCT CASE WHEN NOT is_paid THEN event_franchise END, ', ') AS free_event_franchises,
-        STRING_AGG(DISTINCT
-            CASE WHEN event_edition IS NOT NULL
-                 THEN CONCAT(event_franchise, ' ', event_edition)
-                 ELSE event_franchise
-            END, ', ') AS event_franchise_editions,
         -- Loyalty / recency (numeric editions only — regional editions like "Hyderabad" excluded)
         MIN(SAFE_CAST(event_edition AS INT64)) AS first_event_year,
         MAX(SAFE_CAST(event_edition AS INT64)) AS last_event_year,
@@ -685,17 +678,16 @@ SELECT
     COALESCE(es.total_programs_joined, 0) AS total_programs_joined,
     COALESCE(es.event_franchise_count, 0) AS event_franchise_count,
     COALESCE(es.distinct_franchise_editions, 0) AS event_franchise_editions_count,
+    -- Franchise rollup (all events, no year) — for "attended D2C ever" filtering
     es.event_franchises,
-    -- Year-bearing event lists (paid wins over free per franchise+year)
+    -- Year-bearing event lists (paid wins over free per franchise+year).
+    -- all_event_names / paid_event_franchises / free_event_franchises dropped:
+    -- they were pure unions / year-stripped duplicates of these two + event_franchises.
     enc.paid_event_names,
     enc.free_event_names,
-    es.event_franchise_editions AS all_event_names,
     COALESCE(enc.total_paid_events, 0) AS total_paid_events,
     COALESCE(enc.total_free_events, 0) AS total_free_events,
     COALESCE(enc.total_events_engaged, 0) AS total_events_engaged,
-    -- Franchise-only rollups (kept for franchise-level filtering)
-    es.paid_event_franchises,
-    es.free_event_franchises,
     -- Loyalty / recency
     es.first_event_year,
     es.last_event_year,
