@@ -268,7 +268,17 @@ events_summary AS (
                  THEN CONCAT(event_franchise, ' ', event_edition)
                  ELSE event_franchise
             END, ', ') AS event_franchise_editions,
-        STRING_AGG(DISTINCT pass_tier, ', ') AS pass_tiers_purchased,
+        -- Year-bearing paid vs free split (e.g. "D2C Summit 2021, D2C Summit 2023").
+        -- Paid wins over free for the same (franchise, year) upstream in silver.events,
+        -- so a name appears in at most one of these two lists.
+        STRING_AGG(DISTINCT CASE WHEN is_paid
+            THEN CONCAT(event_franchise, ' ', IFNULL(event_edition, '')) END, ', ') AS paid_event_names,
+        STRING_AGG(DISTINCT CASE WHEN NOT is_paid
+            THEN CONCAT(event_franchise, ' ', IFNULL(event_edition, '')) END, ', ') AS free_event_names,
+        -- Loyalty / recency (numeric editions only — regional editions like "Hyderabad" excluded)
+        MIN(SAFE_CAST(event_edition AS INT64)) AS first_event_year,
+        MAX(SAFE_CAST(event_edition AS INT64)) AS last_event_year,
+        COUNT(DISTINCT CASE WHEN is_paid THEN SAFE_CAST(event_edition AS INT64) END) AS years_as_paid_attendee,
         SUM(CASE WHEN is_paid AND attendance_status = 'paid' THEN net_revenue ELSE 0 END) AS total_event_revenue,
         SUM(CASE WHEN attendance_status = 'refunded' THEN net_revenue ELSE 0 END) AS total_event_refunds,
         COUNTIF(event_format = 'program') AS total_programs_joined,
@@ -646,8 +656,6 @@ SELECT
     COALESCE(es.total_paid_event_tickets, 0) AS total_event_orders,
     COALESCE(es.total_event_revenue, 0) AS total_event_revenue,
     COALESCE(es.total_event_refunds, 0) AS total_event_refunds,
-    es.pass_tiers_purchased AS event_passes_purchased,
-    es.paid_event_franchises AS event_names_purchased,
     SAFE.PARSE_DATE('%Y%m%d', CAST(o.last_completed_order_date_key AS STRING)) AS last_purchase_date,
 
     COALESCE(es.total_free_event_registrations, 0) AS total_events_registered,
@@ -656,9 +664,17 @@ SELECT
     COALESCE(es.event_franchise_count, 0) AS event_franchise_count,
     COALESCE(es.distinct_franchise_editions, 0) AS event_franchise_editions_count,
     es.event_franchises,
+    -- Year-bearing event lists (paid wins over free per franchise+year)
+    es.paid_event_names,
+    es.free_event_names,
+    es.event_franchise_editions AS all_event_names,
+    -- Franchise-only rollups (kept for franchise-level filtering)
     es.paid_event_franchises,
     es.free_event_franchises,
-    es.event_franchise_editions,
+    -- Loyalty / recency
+    es.first_event_year,
+    es.last_event_year,
+    COALESCE(es.years_as_paid_attendee, 0) AS years_as_paid_attendee,
     es.programs_joined,
     es.last_event_interaction_date,
 
