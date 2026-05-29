@@ -273,7 +273,7 @@ events_summary AS (
         MAX(SAFE_CAST(event_edition AS INT64)) AS last_event_year,
         COUNT(DISTINCT CASE WHEN is_paid THEN SAFE_CAST(event_edition AS INT64) END) AS years_as_paid_attendee,
         SUM(CASE WHEN is_paid AND attendance_status = 'paid' THEN net_revenue ELSE 0 END) AS total_event_revenue,
-        SUM(CASE WHEN attendance_status = 'refunded' THEN net_revenue ELSE 0 END) AS total_event_refunds,
+        SUM(refund_amount) AS total_event_refunds,
         COUNTIF(event_format = 'program') AS total_programs_joined,
         STRING_AGG(DISTINCT CASE WHEN event_format = 'program' THEN event_franchise END, ', ') AS programs_joined,
         MAX(interaction_date) AS last_event_interaction_date

@@ -253,16 +253,10 @@ SELECT
     {{ normalize_seniority('COALESCE(NULLIF(i.seniority, ""), NULLIF(c.seniority, ""), NULLIF(gf.seniority, ""), NULLIF(w.seniority, ""), NULLIF(t.seniority, ""))') }} AS seniority,
 
     -- ═══ INDUSTRY ═══ (Inc42 44K > CIO 8K > GF88 87K > Tally)
-    COALESCE(
-        NULLIF(i.industry, ''), NULLIF(c.industry, ''),
-        NULLIF(gf.industry, ''), NULLIF(t.sector, '')
-    ) AS industry,
+    {{ scrub_sentinel('COALESCE(NULLIF(i.industry, ""), NULLIF(c.industry, ""), NULLIF(gf.industry, ""), NULLIF(t.sector, ""))', allow_short=False) }} AS industry,
 
     -- ═══ LINKEDIN ═══ (Inc42 24K > CIO 1.7K > Tally > HubSpot)
-    COALESCE(
-        NULLIF(i.linkedin_url, ''), NULLIF(c.linkedin_url, ''),
-        NULLIF(t.linkedin_url, ''), NULLIF(h.linkedin_url, '')
-    ) AS linkedin_url,
+    {{ scrub_sentinel('COALESCE(NULLIF(i.linkedin_url, ""), NULLIF(c.linkedin_url, ""), NULLIF(t.linkedin_url, ""), NULLIF(h.linkedin_url, ""))', allow_short=False) }} AS linkedin_url,
 
     -- ═══ LOCATION (normalized) ═══
     {{ normalize_city('COALESCE(NULLIF(i.city, ""), NULLIF(c.city, ""), NULLIF(w.city, ""), NULLIF(t.city, ""), NULLIF(h.city, ""))') }} AS city,

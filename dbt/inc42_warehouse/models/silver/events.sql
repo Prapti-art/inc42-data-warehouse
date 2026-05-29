@@ -34,9 +34,10 @@ paid_tickets AS (
         {{ event_franchise('product_name') }} AS event_franchise,
         COALESCE({{ event_format('product_name') }}, 'summit') AS event_format,
         'attendee' AS event_role,
-        -- is_paid TRUE only when money actually changed hands (paid or refunded).
-        -- pending / cancelled orders had no payment, so is_paid = FALSE.
-        CASE WHEN is_completed = 1 OR is_refunded = 1 THEN TRUE ELSE FALSE END AS is_paid,
+        -- is_paid TRUE only for completed orders. Refunded = money returned, so
+        -- treated as NOT paid (falls into the free bucket downstream); pending /
+        -- cancelled never paid. attendance_status still distinguishes the four states.
+        CASE WHEN is_completed = 1 THEN TRUE ELSE FALSE END AS is_paid,
         {{ pass_tier('pass_type') }} AS pass_tier,
         pass_type AS pass_type_original,
         CAST(COALESCE(net_revenue, 0) AS NUMERIC) AS net_revenue,
@@ -84,7 +85,16 @@ deduped AS (
                     ELSE 9
                 END,
                 interaction_date DESC NULLS LAST
-        ) AS rn
+        ) AS rn,
+        -- Grain-level revenue: sum ALL line items for this (contact, franchise,
+        -- year, role), so a multi-pass / multi-ticket buyer is not undercounted
+        -- by keeping only the surviving row's single net_revenue.
+        SUM(CASE WHEN attendance_status = 'paid' THEN net_revenue ELSE 0 END) OVER (
+            PARTITION BY contact_key, event_franchise, IFNULL(event_edition, ''), event_role
+        ) AS grain_paid_revenue,
+        SUM(CASE WHEN attendance_status = 'refunded' THEN net_revenue ELSE 0 END) OVER (
+            PARTITION BY contact_key, event_franchise, IFNULL(event_edition, ''), event_role
+        ) AS grain_refund_amount
     FROM with_edition
 )
 
@@ -105,7 +115,10 @@ SELECT
     d.is_paid,
     d.pass_tier,
     d.pass_type_original,
-    d.net_revenue,
+    -- net_revenue is now the grain total (all completed line items for this
+    -- contact×franchise×year×role), not just the surviving row's single value.
+    d.grain_paid_revenue AS net_revenue,
+    d.grain_refund_amount AS refund_amount,
     d.attendance_status,
     d.interaction_date,
     d.event_name_original,

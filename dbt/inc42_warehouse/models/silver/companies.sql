@@ -80,18 +80,20 @@ web AS (
 
 SELECT
     c.company_id,
-    c.company_name,
+    -- company_name kept verbatim (not title-cased — preserves brand casing like
+    -- "boAt", "BYJU'S"); only sentinel junk scrubbed.
+    {{ scrub_sentinel('c.company_name', allow_short=False) }} AS company_name,
     c.website,
     c.domain,
-    c.sector,
-    c.sub_sector,
-    c.business_model,
-    c.city,
-    c.state,
-    c.country,
+    {{ scrub_sentinel('c.sector', allow_short=False) }} AS sector,
+    {{ scrub_sentinel('c.sub_sector', allow_short=False) }} AS sub_sector,
+    {{ scrub_sentinel('c.business_model', allow_short=False) }} AS business_model,
+    {{ normalize_city('c.city') }} AS city,
+    {{ normalize_state('c.state') }} AS state,
+    {{ normalize_country('c.country') }} AS country,
     c.founded_year,
     c.tags,
-    c.linkedin,
+    {{ scrub_sentinel('c.linkedin', allow_short=False) }} AS linkedin,
 
     -- Funding
     COALESCE(f.total_funding_usd, 0) AS total_funding_usd,
