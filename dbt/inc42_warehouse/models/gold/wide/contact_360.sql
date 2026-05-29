@@ -134,17 +134,17 @@ people_match AS (
     SELECT linkedin_slug, person_uuid, dl_person_name, dl_person_description
     FROM (
         SELECT
-            LOWER(REGEXP_REPLACE(REGEXP_REPLACE(linkedin, r'https?://(www\.)?linkedin\.com/in/', ''), r'[/?].*$', '')) AS linkedin_slug,
+            {{ linkedin_slug('linkedin') }} AS linkedin_slug,
             person_uuid,
             name AS dl_person_name,
             long_description AS dl_person_description,
             ROW_NUMBER() OVER (
-                PARTITION BY LOWER(REGEXP_REPLACE(REGEXP_REPLACE(linkedin, r'https?://(www\.)?linkedin\.com/in/', ''), r'[/?].*$', ''))
+                PARTITION BY {{ linkedin_slug('linkedin') }}
                 ORDER BY last_modified_date DESC
             ) AS rn
         FROM {{ source('bronze', 'dl_people_table') }}
-        WHERE linkedin IS NOT NULL AND linkedin != ''
-          AND LENGTH(REGEXP_REPLACE(REGEXP_REPLACE(linkedin, r'https?://(www\.)?linkedin\.com/in/', ''), r'[/?].*$', '')) > 2
+        WHERE {{ linkedin_slug('linkedin') }} IS NOT NULL
+          AND LENGTH({{ linkedin_slug('linkedin') }}) > 2
     )
     WHERE rn = 1
 ),
@@ -909,7 +909,7 @@ LEFT JOIN company_tags ct ON cm.company_uuid = ct.company_uuid
 LEFT JOIN company_sector_thesis cst ON cm.company_uuid = cst.company_uuid
 
 -- People enrichment (via LinkedIn URL slug)
-LEFT JOIN people_match pm ON LOWER(REGEXP_REPLACE(REGEXP_REPLACE(c.linkedin_url, r'https?://(www\.)?linkedin\.com/in/', ''), r'[/?].*$', '')) = pm.linkedin_slug
+LEFT JOIN people_match pm ON {{ linkedin_slug('c.linkedin_url') }} = pm.linkedin_slug
     AND c.linkedin_url IS NOT NULL AND c.linkedin_url != ''
 LEFT JOIN people_experience pe ON pm.person_uuid = pe.people_uuid
 LEFT JOIN people_education edu ON pm.person_uuid = edu.people_uuid

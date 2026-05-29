@@ -234,6 +234,22 @@
         r'\bAi\b','AI'), r'\bMl\b','ML'), r'\bUx\b','UX'), r'\bUi\b','UI'), r'\bCrm\b','CRM'),
         r'\bErp\b','ERP'), r'\bSaas\b','SaaS'), r'\bB2b\b','B2B'), r'\bB2c\b','B2C'), r'\bD2c\b','D2C')
 {% endmacro %}
+{# ──────────────────────────────────────────────────────────────────
+   linkedin_slug: extract the /in/<slug> handle from a LinkedIn URL.
+   Works for any subdomain (www. / in. / m. / none). Returns NULL when
+   the URL has no /in/ profile path (company pages, /feed, /me, bare
+   linkedin.com, facebook links, etc.) — critically, it must NOT collapse
+   malformed URLs to a constant like "https:", which previously caused
+   hundreds of contacts to false-match one Datalabs person.
+   ────────────────────────────────────────────────────────────────── #}
+{% macro linkedin_slug(col) %}
+    NULLIF(
+        REGEXP_EXTRACT(LOWER(TRIM({{ col }})), r'linkedin\.com/in/([a-z0-9\-_%\.]+)'),
+        ''
+    )
+{% endmacro %}
+
+
 {% macro normalize_city(col) %}
     CASE UPPER(TRIM({{ scrub_sentinel(col) }}))
         WHEN 'BANGALORE' THEN 'Bengaluru' WHEN 'BANGLORE' THEN 'Bengaluru'

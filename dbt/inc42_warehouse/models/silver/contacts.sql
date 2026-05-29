@@ -250,7 +250,12 @@ SELECT
     {{ normalize_designation('COALESCE(NULLIF(i.designation, ""), NULLIF(i.user_designation, ""), NULLIF(i.working_designation, ""), NULLIF(c.designation, ""), NULLIF(t.designation, ""), NULLIF(h.designation, ""))') }} AS designation,
 
     -- ═══ SENIORITY ═══ (normalized to fixed bucket set)
-    {{ normalize_seniority('COALESCE(NULLIF(i.seniority, ""), NULLIF(c.seniority, ""), NULLIF(gf.seniority, ""), NULLIF(w.seniority, ""), NULLIF(t.seniority, ""))') }} AS seniority,
+    -- Prefer an explicit seniority field; if none, derive seniority from the
+    -- designation/title (e.g. "Store Manager" -> Manager, "Founder" -> Founder).
+    COALESCE(
+        {{ normalize_seniority('COALESCE(NULLIF(i.seniority, ""), NULLIF(c.seniority, ""), NULLIF(gf.seniority, ""), NULLIF(w.seniority, ""), NULLIF(t.seniority, ""))') }},
+        {{ normalize_seniority('COALESCE(NULLIF(i.designation, ""), NULLIF(i.user_designation, ""), NULLIF(i.working_designation, ""), NULLIF(c.designation, ""), NULLIF(t.designation, ""), NULLIF(h.designation, ""))') }}
+    ) AS seniority,
 
     -- ═══ INDUSTRY ═══ (Inc42 44K > CIO 8K > GF88 87K > Tally)
     {{ scrub_sentinel('COALESCE(NULLIF(i.industry, ""), NULLIF(c.industry, ""), NULLIF(gf.industry, ""), NULLIF(t.sector, ""))', allow_short=False) }} AS industry,
