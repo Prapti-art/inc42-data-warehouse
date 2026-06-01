@@ -237,6 +237,38 @@ customerio = read_bq("""
 
 **`JSON_VALUE(traits, '$.email')`** — BigQuery's function to extract a value from a JSON column. `$.email` means "the `email` field at the top level of the JSON object."
 
+#### Section 4a: Moengage Extract *(added May 2026 — 8th identity source)*
+
+Moengage was added as the 7th identity source in `identity_resolution.py`. It reads from `bronze.moengage_export` (one-shot CSV load — API ingestion is a roadmap item):
+
+```python
+moengage = read_bq("""
+    SELECT
+        'moengage' AS source_system,
+        COALESCE(NULLIF(id, ''), NULLIF(uid, ''), NULLIF(moengage_id, '')) AS source_id,
+        LOWER(TRIM(COALESCE(
+            NULLIF(email_standard, ''),
+            NULLIF(work_email, ''),
+            NULLIF(personal_email, ''),
+            NULLIF(plus_email, ''),
+            NULLIF(secondary_email, '')
+        ))) AS email,
+        first_name, last_name,
+        COALESCE(NULLIF(phone_number, ''), NULLIF(mobile_number_standard, '')) AS raw_phone,
+        company_name, designation,
+        last_known_city AS city,
+        COALESCE(NULLIF(linkedin_profile_url, ''), NULLIF(linkedinurl, ''), NULLIF(linkedin, '')) AS linkedin_url
+    FROM bronze.moengage_export
+    WHERE COALESCE(NULLIF(email_standard,''), NULLIF(work_email,''), ...) IS NOT NULL
+""")
+```
+
+**Why 5 email columns are coalesced:** Moengage's CSV export has separate `Email (Standard)`, `Personal Email`, `Plus Email`, `Secondary Email`, `Work Email` fields. `Email (Standard)` covers 99.8% of emailed rows; the others add ~600 contacts otherwise missed.
+
+Rows with no email (1.45M of 1.75M — anonymous SDK/push profiles) are skipped here because identity-res keys on email/phone. The Moengage union into `sources` happens at the top of Step 2.
+
+The merge added **~160K unique contacts** to `silver.unified_contacts` (148K Moengage-only + 12K cross-source matches), unlocked the **push-reachability** signal (300 = reachable on 57% of base), and powers 22 `moengage_*` columns on `contact_360`.
+
 #### Section 5: Union All Sources
 
 ```python
@@ -609,6 +641,121 @@ FROM {{ source('bronze', 'dl_company_table') }} dl
 
 ---
 
+## 5a. dbt Macros: clean_value.sql *(added May 2026)*
+
+**Location:** `dbt/inc42_warehouse/macros/clean_value.sql`
+
+A shared dbt macro library applied across `silver.contacts` and `silver.companies` to standardize values before they reach the gold layer.
+
+### The macros
+
+| Macro | Purpose |
+|---|---|
+| `scrub_sentinel(col, allow_short=true)` | Returns NULL for junk strings (`undefined`, `na`, `n/a`, `null`, `none`, `tbd`, `test`, `xxx`, `-`, `.`, `?`, etc.) and empty strings. With `allow_short=false`, also nulls any value length ≤ 2 (used for company/city/designation where 1–2 char entries are never real). |
+| `title_case_clean(col)` | Trims, collapses internal whitespace, scrubs sentinels, then `INITCAP`. Used for `first_name`, `last_name`. |
+| `normalize_country(col)` | ISO codes + common variants → canonical name (`IN`→India, `US`/`USA`→United States, `UK`/`GB`→United Kingdom, `AE`→United Arab Emirates, and ~20 more). Unknown → INITCAP fallback. |
+| `normalize_state(col)` | Indian state codes + verbose names → full name (`KA`→Karnataka, `MH`→Maharashtra, `DL`/`NCR`/`NCT OF DELHI`→Delhi, `TS`/`TG`→Telangana, etc.). |
+| `normalize_city(col)` | Aliases → canonical (`Bangalore`/`BLR`→Bengaluru, `Bombay`→Mumbai, `Gurgaon`/`GGN`→Gurugram, `Trivandrum`→Thiruvananthapuram, `Cochin`→Kochi, `Vizag`→Visakhapatnam, etc.). |
+| `normalize_seniority(col)` | Free-text → closed 15-value enum: Founder, C-Suite, VP/Director, Senior, Manager, Associate, Junior, Intern, Student, Investor, Partner, Researcher, Consultant, Government, Startup Enthusiast. Anything else → NULL. |
+| `normalize_job_function(col)` | Closed set: Engineering, Product, Design, Data, Marketing, Sales & BD, Finance & Accounting, HR, Legal & Compliance, Consulting, Research, Founders Office, R&D, Operations. |
+| `normalize_designation(col)` | Title-cases the title, canonicalizes founder/CEO variants (`co-founder & ceo` → `Co-Founder & CEO`, `chief technology officer` → `CTO`), and re-uppercases 35 acronyms via a helper (`uppercase_acronyms`): CEO, CTO, VP, MD, HR, IT, BD, PM, AI, ML, UX, UI, SaaS, B2B, D2C, ERP, CRM, … |
+| `linkedin_slug(col)` | Extracts the slug after `/in/` for **any** LinkedIn subdomain (`in.linkedin.com`, `m.linkedin.com`, `www.linkedin.com`, bare `linkedin.com`). Returns NULL for company pages / `/feed` / `/me` / facebook URLs / any URL without a real `/in/` slug. |
+
+### Why `linkedin_slug` is non-obvious
+
+The previous slug extractor was a double `REGEXP_REPLACE` that only handled `www.linkedin.com/in/`. For any malformed URL — country subdomains, company pages, facebook links — the replace did nothing, and the trailing `REGEXP_REPLACE(..., '[/?].*$', '')` truncated everything past the first `/`, collapsing the URL to the literal string `"https:"`. Every malformed contact URL matched a single Datalabs person (`P-180`, Arun Tadanki) whose own URL `https://in.linkedin.com/in/aruntadanki` also collapsed to `"https:"` — producing 584 false IIT/IIM alumni claims. The new macro uses `REGEXP_EXTRACT(..., r'linkedin\.com/in/([a-z0-9\-_%\.]+)')` so any subdomain works and a missing slug stays NULL.
+
+### How they're used
+
+```sql
+-- silver/contacts.sql
+{{ title_case_clean('COALESCE(NULLIF(i.first_name,""), NULLIF(c.first_name,""), ...)') }} AS first_name,
+{{ normalize_city('COALESCE(NULLIF(i.city,""), NULLIF(c.city,""), ...)') }} AS city,
+{{ normalize_seniority('COALESCE(NULLIF(i.seniority,""), ...)') }} AS seniority,
+-- silver/companies.sql
+{{ scrub_sentinel('c.company_name', allow_short=false) }} AS company_name,
+{{ normalize_country('c.country') }} AS country,
+```
+
+**Seniority fallback** — `silver.contacts.seniority` further wraps the call in a `COALESCE` so when no explicit seniority source exists, it derives one from the designation: "Store Manager" → Manager, "Founder" → Founder. The two `normalize_seniority` calls (on seniority then on designation) return at most one match.
+
+---
+
+## 5b. dbt Silver: events.sql *(added May 2026)*
+
+**Location:** `dbt/inc42_warehouse/models/silver/events.sql`
+**Materialized:** `silver_silver.events` (~13.8k rows, refreshed daily)
+**Grain:** One row per `(contact_key, event_franchise, event_edition, event_role)`
+
+### Why it exists
+
+Before this model, event interactions were spread across `fact_event_attendance` (free registrations) and `fact_orders` (paid tickets) with no cross-source dedup. A person who registered for a summit *and* later bought a ticket appeared twice in the gold layer, and multi-year attendance collapsed into a single franchise name. `silver.events` is the single source of truth that fixes both.
+
+### The CTE structure
+
+```sql
+free_registrations AS (
+    -- from fact_event_attendance — is_paid=FALSE, net_revenue=0
+    SELECT contact_key,
+           event_name AS event_name_original,
+           {{ event_franchise('event_name') }} AS event_franchise,
+           {{ event_format('event_name') }}    AS event_format,
+           {{ event_role('event_name') }}      AS event_role,
+           FALSE AS is_paid, ...
+),
+paid_tickets AS (
+    -- from fact_orders WHERE product_type='event'
+    -- is_paid = TRUE only when is_completed=1 (refunds treated as NOT paid)
+    SELECT contact_key,
+           product_name AS event_name_original,
+           {{ event_franchise('product_name') }} AS event_franchise,
+           'attendee' AS event_role,
+           CASE WHEN is_completed = 1 THEN TRUE ELSE FALSE END AS is_paid,
+           {{ pass_tier('pass_type') }} AS pass_tier, ...
+),
+unioned AS (
+    SELECT * FROM free_registrations UNION ALL SELECT * FROM paid_tickets
+),
+with_edition AS (
+    -- event_edition = YEAR from interaction_date (single source of truth)
+    SELECT *, CAST(EXTRACT(YEAR FROM interaction_date) AS STRING) AS event_edition
+    FROM unioned
+),
+deduped AS (
+    SELECT *,
+        ROW_NUMBER() OVER (
+            PARTITION BY contact_key, event_franchise, IFNULL(event_edition,''), event_role
+            ORDER BY is_paid DESC,                          -- paid wins
+                     CASE pass_tier WHEN 'All Access' THEN 1 WHEN 'Growth' THEN 2 ... END,
+                     interaction_date DESC NULLS LAST
+        ) AS rn,
+        -- Grain-summed revenue across all completed line items (multi-pass safe)
+        SUM(CASE WHEN attendance_status='paid' THEN net_revenue ELSE 0 END) OVER (
+            PARTITION BY contact_key, event_franchise, IFNULL(event_edition,''), event_role
+        ) AS grain_paid_revenue,
+        SUM(CASE WHEN attendance_status='refunded' THEN net_revenue ELSE 0 END) OVER (...)
+            AS grain_refund_amount
+    FROM with_edition
+)
+SELECT ..., d.grain_paid_revenue AS net_revenue, d.grain_refund_amount AS refund_amount, ...
+FROM deduped d
+LEFT JOIN dim_contact c USING(contact_key)
+WHERE d.rn = 1
+```
+
+### Key behaviors to remember
+- **`event_franchise` keeps D2CX Converge / D2C Retreat / D2C Summit as separate franchises**; BigShift separate from FAST42.
+- **`event_edition` is always the calendar year** from `interaction_date` (not parsed from the name) so "D2C Summit 2.0" (2021), "D2C Summit 3.0" (2022) and "D2C Summit 2023" all get clean year values.
+- **Refunded ≠ paid.** `is_paid` is TRUE only when `is_completed=1`. Refunded orders fall into the free bucket downstream; `refund_amount` retains the money for tracking.
+- **`net_revenue` is grain-summed** via window function so multi-pass / multi-ticket buyers are not undercounted by the dedup keeping only one survivor row.
+- **Macros used:** `event_franchise`, `event_format`, `event_role`, `pass_tier` (defined in `macros/normalize_event.sql`).
+
+### Where it feeds
+
+`silver.events` powers `contact_360`'s `events_summary` CTE (and a sibling `event_year_grain` → `event_names_clean` CTE that collapses to `(contact, franchise, year)` before splitting paid vs free) to produce year-bearing `paid_event_names` / `free_event_names` plus loyalty signals (`first_event_year`, `last_event_year`, `years_as_paid_attendee`).
+
+---
+
 ## 6. dbt Gold: dim_contact.sql
 
 **Location:** `dbt/inc42_warehouse/models/gold/dimensions/dim_contact.sql`
@@ -870,7 +1017,47 @@ LEFT JOIN {{ ref('dim_contact') }} dc ON cm.unified_contact_id = dc.unified_cont
 
 ## 13. dbt Gold: contact_360.sql
 
-**The most important table in the warehouse.** One row = everything about a person.
+**The most important table in the warehouse.** One row = everything about a person (~489K rows × **173 columns** as of May 2026).
+
+### May 2026 CTEs added to contact_360.sql
+
+The original walk-through below describes the orders/events/forms/marketing CTEs. These CTEs have been **added on top**:
+
+| CTE | Purpose |
+|---|---|
+| `company_sector_thesis` | Pulls Inc42 sector + sub-sector for the contact's matched company (Datalabs company → sector thesis join). Used by `contact_sectors` + `interest_tags`. |
+| `people_match` | Joins contact's `linkedin_url` (via the new `linkedin_slug` macro) to a Datalabs person. Uses `ROW_NUMBER() OVER (PARTITION BY linkedin_slug)` for dedup. Replaces an earlier www-only regex that false-matched 584 contacts to P-180. |
+| `people_experience` / `people_education` / `people_all_education` | Datalabs current-job + education + premier-institute alumni flags (is_iit/iim/isb/bits/nmims/global_top/premier). |
+| `events_summary` | Aggregates `silver.events` per contact — counts, franchises, year-range, revenue. |
+| `event_year_grain` + `event_names_clean` | Collapses `silver.events` to `(contact, franchise, year)` grain BEFORE splitting paid vs free, so a paid+free row for the same year doesn't leak into both lists. Produces `paid_event_names`, `free_event_names`, `total_paid_events`, `total_free_events`, `total_events_engaged`. |
+| `moengage_engagement` | Pulls 22 Moengage reachability/LTV/session/geo fields per email from `bronze.moengage_export`. |
+| `event_interest_signals` / `report_interest_signals` / `contact_sectors` / `interest_tags` | The 4-source interest-flag pipeline (events + reports/giveaways + company sector + newsletters → 14 boolean `interest_*` flags). |
+
+### Three-axis engagement scoring (in the final SELECT)
+
+```sql
+-- paid axis: spend behavior
+ROUND(memberships*50 + paid_event_tickets*30 + addons*20 + revenue*0.001, 1) AS paid_engagement_score,
+-- non-paid axis: content + reach
+ROUND(newsletters*10 + free_event_regs*8 + forms*3 + opens*0.5 + clicks*2
+      + CASE WHEN moengage_reachability_push IN ('300','100') THEN 5 ELSE 0 END, 1) AS nonpaid_engagement_score,
+-- combined (paid weighted 2x)
+ROUND(paid*2 + nonpaid, 1) AS combined_engagement_score,
+-- tier (top-down evaluation)
+CASE
+    WHEN (...paid score) >= 50 OR (...nonpaid score) >= 100 THEN 'hot'
+    WHEN total_orders > 0 OR paid_events > 0 OR newsletters >= 2 OR forms >= 3 OR free_events >= 1 THEN 'engaged'
+    WHEN newsletters >= 1 OR forms >= 1 OR opens >= 1 OR moengage_push IN ('300','100') THEN 'passive'
+    ELSE 'dormant'
+END AS engagement_tier,
+```
+
+Distribution across 489K contacts: **hot 14,527 · engaged 61,739 · passive 330,029 · dormant 82,552.**
+
+### Other notable changes
+- `event_names_purchased` / `paid_event_franchises` / `free_event_franchises` / `all_event_names` **removed** as redundant (year-stripped or pure-union duplicates of `paid_event_names` / `free_event_names` / `event_franchises`).
+- `total_event_refunds` now sums `refund_amount` from `silver.events` (refunded rows no longer survive dedup after the refund=free fix).
+- Seniority now falls back to title-derived value when no source seniority exists (see `silver/contacts.sql`).
 
 ```sql
 WITH contact AS (

@@ -12,7 +12,7 @@
 
 ```mermaid
 flowchart LR
-    subgraph SOURCES["7 Source Systems"]
+    subgraph SOURCES["8 Source Systems"]
         GF["Gravity Forms"]
         TL["Tally"]
         I42["Inc42 DB"]
@@ -20,6 +20,7 @@ flowchart LR
         WOO["WooCommerce"]
         HS["HubSpot"]
         DL["Datalabs DB"]
+        ME["Moengage"]
     end
 
     subgraph WAREHOUSE["Data Warehouse - BigQuery"]
@@ -33,6 +34,7 @@ flowchart LR
     WOO -->|"REST API / 15min"| BQ
     HS -->|"CRM v3 API / 6hrs"| BQ
     DL -->|"DB replication / daily"| BQ
+    ME -->|"One-shot CSV (API ingestion TBD)"| BQ
 ```
 
 ### What Each Source Provides
@@ -46,6 +48,7 @@ flowchart LR
 | **WooCommerce** | Orders, Payments (Razorpay/Stripe), Refunds, Billing addresses, UTM tracking | Products, amounts, taxes, discounts, coupons, payment method |
 | **HubSpot** | CRM contacts, Companies, Deals, Sales activities (calls/emails/meetings) | Lifecycle stage, lead score, deal amount, pipeline stage, owner |
 | **Datalabs DB** | **25+ tables**: Company profiles, MCA financials (audited), Funding rounds, People (founders/CXOs), Investors, Web traffic, App metrics, Employee data, Glassdoor, Jobs, Stock data, Acquisitions | Revenue, expenses, EBITDA, margins, funding amounts, investor names, headcount, web visits, app ratings |
+| **Moengage** | Web/app/push reachability state, sessions, conversions, LTV, opt-in/bounce/spam flags, install state, last-seen geo | Push reachable Yes/No, email opt-in, hard-bounce flag, last_seen, sessions, LTV, install status |
 
 ---
 
@@ -284,6 +287,23 @@ These are the foundation — every other Silver table references these.
 | attended | TRUE | From Customer.io boolean flags (d2c_summit_paid_attendee etc.) |
 | woo_order_id | 88201 | Matched to WooCommerce order by contact + event + date window |
 | source_system | gravity | Which system captured registration |
+
+#### `silver.events` *(added May 2026)*
+**What:** Single source of truth for *all* event interactions — unions free registrations (`fact_event_attendance`) with paid tickets (`fact_orders WHERE product_type='event'`) and deduplicates so a person who both registered and paid for the same summit no longer counts twice.
+**Source:** `fact_event_attendance` + `fact_orders` + macros (`event_franchise`, `event_format`, `event_role`, `pass_tier`)
+**Grain:** One row per `(contact_key, event_franchise, event_edition, event_role)` — paid wins over free; within paid, pass-tier hierarchy (All Access > Growth > Live > Select > Enabler) breaks ties.
+
+**Key behaviors**
+- `event_franchise` from regex (D2C Summit / D2CX Converge / GenAI Summit / Fintech Summit / FAST42 / BigShift / AI Workshop / MoneyX / …). D2CX Converge stays *separate* from D2C Summit; BigShift separate from FAST42.
+- `event_edition` = year from `interaction_date` (`order_date` for paid, `reg_date` for free). Regional editions (Hyderabad/Mumbai etc.) still resolve to a year via date.
+- `is_paid = TRUE` only when `is_completed = 1`. **Refunded** orders are now treated as **not paid** (money returned → fall into the free bucket). `attendance_status` retains the four states: `paid` / `refunded` / `cancelled` / `pending`.
+- `net_revenue` is **grain-summed** across all completed line items (window sum), so a multi-pass / multi-ticket buyer is not undercounted by the dedup keeping only one row.
+- `refund_amount` is a separate grain-summed column for refund tracking.
+- `event_role` ∈ {attendee, registrant, sponsor, speaker, applicant} — sponsor-form submissions are mapped here.
+
+**Schema (17 columns):** `event_key, contact_key, unified_contact_id, email, event_franchise, event_edition, event_format, event_role, is_paid, pass_tier, pass_type_original, net_revenue, refund_amount, attendance_status, interaction_date, event_name_original, updated_at`
+
+**Why this matters at the gold layer:** `contact_360` aggregates from `silver.events` (via the `event_year_grain` CTE that collapses to `(contact, franchise, year)` before splitting paid/free) to produce **year-bearing** `paid_event_names` / `free_event_names` (e.g. "D2C Summit 2021, D2C Summit 2022, D2C Summit 2023") plus loyalty signals `first_event_year`, `last_event_year`, `years_as_paid_attendee`. The franchise-only legacy collapse ("D2C Summit") is no longer used.
 
 #### `silver.newsletter_subscriptions`
 **What:** One row per person per newsletter. Tracks subscription status for each of the 9 newsletters.
@@ -680,6 +700,64 @@ flowchart TB
 > **Every company table joins to `companies` via `company_id`.**
 > **Contacts link to companies via `company_id` (many contacts → one company).**
 > **Company people link back to contacts if they exist in the Inc42 ecosystem.**
+
+---
+
+## 2.2 May 2026 Additions
+
+The following capabilities were layered on top of the Silver/Gold tables described above.
+
+### Value-normalization macros — `macros/clean_value.sql`
+A shared library of dbt macros applied consistently across `silver.contacts` + `silver.companies`:
+
+| Macro | Behavior |
+|---|---|
+| `scrub_sentinel(col, allow_short)` | NULLs out junk strings: `undefined`, `na`, `n/a`, `null`, `none`, `nan`, `tbd`, `test`, `xxx`, `-`/`--`/`.`/`?`/`*`, empty, etc. Optionally NULLs length-≤2 values for non-name fields. |
+| `title_case_clean(col)` | Trim + collapse whitespace + scrub_sentinel + INITCAP. Used for names/cities. |
+| `normalize_country(col)` | ISO codes + variants → canonical country name (IN→India, US→United States, UK→United Kingdom, AE→UAE, …). |
+| `normalize_state(col)` | Indian state codes + verbose names → canonical (DL→Delhi, MH→Maharashtra, KA→Karnataka, NCR→Delhi, …). |
+| `normalize_city(col)` | Aliases + sub-districts → canonical (Bangalore→Bengaluru, Bombay→Mumbai, Gurgaon→Gurugram, Trivandrum→Thiruvananthapuram, …). |
+| `normalize_seniority(col)` | Free-text → closed 15-value enum: Founder, C-Suite, VP/Director, Senior, Manager, Associate, Junior, Intern, Student, Investor, Partner, Researcher, Consultant, Government, Startup Enthusiast. Garbage → NULL. |
+| `normalize_job_function(col)` | Closed set: Engineering, Product, Design, Data, Marketing, Sales & BD, Finance & Accounting, HR, Legal & Compliance, Consulting, Research, Founders Office, R&D, Operations. |
+| `normalize_designation(col)` | Title-case + acronym re-uppercase (35 acronyms: CEO, CTO, VP, MD, HR, AI, ML, UX, SaaS, B2B, D2C, …); canonicalizes founder/CEO variants. |
+| `linkedin_slug(col)` | Extracts `/in/<slug>` for **any** subdomain (`in.linkedin.com`, `m.linkedin.com`, `www.linkedin.com`). Returns NULL for non-`/in/` URLs (company pages, `/feed`, `/me`, facebook). This replaced an earlier regex that collapsed every malformed URL to the literal `"https:"` — that bug had matched 584 contacts to one Datalabs person (P-180). |
+
+### Seniority derivation fallback
+`silver.contacts.seniority` falls back to `normalize_seniority(designation)` when no explicit seniority source exists. "Store Manager" → Manager, "Founder" → Founder, etc.
+
+### Interest tagging — 14 boolean flags on `contact_360`
+`interest_d2c, interest_ai, interest_fintech, interest_enterprise_tech, interest_health_tech, interest_edtech, interest_clean_tech, interest_agritech, interest_logistics, interest_travel_tech, interest_real_estate_tech, interest_web3, interest_media_entertainment, interest_startup_ecosystem`
+
+Each flag fires (TRUE) when **any** of four signal sources match:
+1. **Events attended** — `silver.events` franchises (e.g. Fintech Summit → `interest_fintech`)
+2. **Associated company sector** — Inc42 sector thesis via Datalabs company match
+3. **Content consumed** — `fact_form_submissions` form_name/subcategory parsing (D2C Report, Fintech Report, IPO/Unicorn/Funding/VC ebooks/guides, EV giveaway, …)
+4. **Newsletter subscriptions** — e.g. TheOutline → `interest_d2c`, Markets/Moneyball → `interest_startup_ecosystem`
+
+### Three-axis engagement scoring
+| Column | Formula |
+|---|---|
+| `paid_engagement_score` | memberships × 50 + paid_events × 30 + addons × 20 + revenue × 0.001 |
+| `nonpaid_engagement_score` | newsletters × 10 + free_events × 8 + forms × 3 + opens × 0.5 + clicks × 2 + push_reachable × 5 |
+| `combined_engagement_score` | paid × 2 + nonpaid |
+| `engagement_tier` | hot / engaged / passive / dormant (threshold buckets on paid + non-paid axes) |
+
+Distribution across 489K contacts: hot 14,527 · engaged 61,739 · passive 330,029 · dormant 82,552.
+
+### Moengage merge (8th identity source)
+Moengage emails feed identity-resolution (Steps 4 + 5 — email then phone). 22 Moengage engagement fields land on `contact_360` (push reachability android/ios/web, sessions, conversions, LTV, opt-ins, hard-bounce, last-seen geo). Cluster delta: +160K unique contacts after merge (148K Moengage-only + 12K cross-source matches).
+
+### Identity-res fixes
+- **Duplicate `unified_contact_id`** collapse — `silver.contacts` LEFT JOIN inputs (inc42, customerio) now deduped to one row per email before the join. Drove count from 8 → 0.
+- **P-180 LinkedIn over-match** — `linkedin_slug` macro replaces a www-only regex that collapsed malformed URLs to `"https:"`, false-matching 584 contacts to one Datalabs person.
+
+### Reverse-ETL column classification
+Every one of the 173 contact_360 columns is mapped to a push-back recommendation in `contact360_logic_sheet.csv`:
+- **Reverse-ETL?** Yes / No
+- **Feasibility:** `single` / `comma` / `tags`
+- **Conflict resolution:** how user-entered vs enriched values reconcile
+
+84 of 173 columns are pushable; newsletter and Moengage-origin fields are correctly marked No to prevent sync loops.
 
 ---
 

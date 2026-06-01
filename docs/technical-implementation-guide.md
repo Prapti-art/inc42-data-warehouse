@@ -8,7 +8,14 @@
 ## 1. Project Overview
 
 ### What We Built
-A data warehouse that unifies **7 source systems** into one queryable platform using the **Medallion Architecture** (Bronze → Silver → Gold) on **Google BigQuery**.
+A data warehouse that unifies **8 source systems** into one queryable platform using the **Medallion Architecture** (Bronze → Silver → Gold) on **Google BigQuery**.
+
+As of May 2026 the gold `contact_360` table holds **~489K unique people × 173 columns**. On top of identity-resolution + 360 views, the warehouse also includes:
+- a standalone `silver.events` model — one row per (person × franchise × year × role), with paid-wins dedup, refund-as-free, multi-year attendance preserved
+- value-normalization macros (`clean_value.sql`) — sentinel scrub, city/state/country canonicalization, seniority/designation/job-function enums, `linkedin_slug` extractor
+- three-axis engagement scoring — `paid_engagement_score`, `nonpaid_engagement_score`, `combined_engagement_score`, `engagement_tier` (hot / engaged / passive / dormant)
+- 14 interest-tag flags driven by events + associated company sector + content/reports + newsletters
+- reverse-ETL column classification (every column tagged push/format) — see `contact360_logic_sheet.csv`
 
 ### The Problem
 - Same person exists in 7 different systems with no shared key
@@ -34,6 +41,7 @@ Dashboards + Reverse ETL
 | WooCommerce | Orders, payments, refunds | REST API |
 | HubSpot | CRM contacts, leads, deals | CRM v3 API |
 | Datalabs DB | Company intelligence (25+ tables) | DB replication |
+| **Moengage** | **Push reachability, sessions, LTV, opt-ins, install state, last-seen geo** | **One-shot CSV (API ingestion is a roadmap item)** |
 
 ---
 
