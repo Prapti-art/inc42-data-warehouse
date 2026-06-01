@@ -22,24 +22,35 @@ Inc42 operates 7 disconnected source systems (Gravity Forms, Tally, Inc42 DB, Cu
 
 ---
 
-## 2. Current State (April 2026)
+## 2. Current State (May 2026)
 
-The warehouse is already operational. Metrics below are from the live pipeline and establish the baseline this SOW extends.
+The warehouse is operational and substantially expanded since the April baseline. Metrics below are from the live pipeline.
 
 | Metric | Current |
 |---|---|
-| Source systems connected | 7 of 7 ✅ |
-| Bronze tables ingested | 49 (25.3M rows) ✅ |
-| Identity resolution (unique people) | 330K across 1M+ records (68% dedup) ✅ |
-| Silver cleaned contacts | 328K ✅ |
-| Gold `contact_360` / `company_360` | Live (328K / 75K rows) ✅ |
+| Source systems connected | 8 of 8 ✅ (added Moengage as 7th identity source) |
+| Bronze tables ingested | 49+ tables; Moengage adds 1.75M raw rows ✅ |
+| Identity resolution (unique people) | **490K** across all systems (vs 330K in April; +160K from Moengage) ✅ |
+| Silver cleaned contacts | **486K** ✅ |
+| Gold `contact_360` / `company_360` | Live (**489K** / 75K rows, **173 columns** on contact_360) ✅ |
+| `silver.events` — standalone event-engagement model | **NEW** ✅ — one row per (person, franchise, year, role), paid-wins dedup, refund=free, multi-year preserved |
+| Casing & value normalization (geo, seniority, designation, job function) | **NEW** ✅ — `clean_value` macro library + applied across silver.contacts / silver.companies |
+| Interest tagging (14 boolean flags) | **NEW** ✅ — driven by events + associated company sector + content/reports + newsletters |
+| Three-axis engagement scoring | **NEW** ✅ — `paid_engagement_score`, `nonpaid_engagement_score`, `combined_engagement_score`, `engagement_tier` (hot/engaged/passive/dormant) |
+| Year-bearing paid/free event names | **NEW** ✅ — `paid_event_names`, `free_event_names`, `years_as_paid_attendee`, etc. |
+| Reverse-ETL column classification (push/format) | **NEW** ✅ — all 173 columns classified in `contact360_logic_sheet.csv` |
+| Datalabs LinkedIn-slug match (P-180 over-match bug) | **FIXED** ✅ — slug regex now handles any subdomain; 584 false matches removed |
 | Orchestration (Airflow, daily midnight IST) | Live ✅ |
-| dbt Core tests & docs | Live ✅ |
+| dbt Core tests & docs | Live ✅ (15/16 passing; `not_null_fact_orders_order_id` outstanding) |
 | Streamlit dashboards (7 pages) | Live ✅ |
 | Looker Studio | Not started 📋 |
-| Reverse ETL → Customer.io | Partial 🚧 |
+| Reverse-ETL **sync jobs** → Customer.io | Feasibility/classification done; sync pipeline not built 🚧 |
 | Reverse ETL → HubSpot | Not started 📋 |
 | Reverse ETL → PostHog | Not started 📋 |
+| Reverse ETL → Moengage (segments push-back) | Not started 📋 |
+| Moengage API ingestion (currently one-shot CSV) | Not started 📋 |
+| Razorpay payments source | Not started 📋 |
+| On-demand segmentation layer / self-serve builder | Not started 📋 |
 | Chatbot (NL → SQL → Excel/Sheets) | Not started 📋 |
 
 ---
@@ -210,13 +221,26 @@ Sources (7) → GCS Landing → BigQuery Bronze → dbt/PySpark → Silver → d
 
 **Engagement duration for remaining scope:** ~12 weeks from kickoff. Tracks run partially in parallel.
 
-### 5.1 Already delivered (pre-SOW, April 2026 baseline)
+### 5.1 Already delivered
+
+**April 2026 baseline**
 - Bronze ingestion for all 7 sources
 - Silver identity and company resolution
 - Gold star schema and 360 views
 - Airflow orchestration + dbt tests
 - Streamlit analytics (7 pages)
 - Customer.io reverse ETL (partial)
+
+**May 2026 additions**
+- **Moengage** integrated as 8th source (identity-resolution + 22 engagement columns in `contact_360`); +160K unique contacts now visible
+- **`silver.events`** standalone event-engagement model — paid-wins dedup per (person, franchise, year), refund=free semantics, multi-year attendance preserved (e.g. D2C Summit 2021 / 2022 / 2023 as distinct rows)
+- **Event revenue grain-sum** — multi-pass / multi-ticket buyers no longer undercounted
+- **Casing & value normalization** — `clean_value` macro library (scrub_sentinel, title_case_clean, normalize_city/state/country/seniority/designation/job_function, linkedin_slug) applied across silver.contacts + silver.companies
+- **14 interest tag flags** in `contact_360` — multi-source (events + associated company sector + content/reports/giveaways + newsletter subs)
+- **Three-axis engagement scoring** — `paid_engagement_score`, `nonpaid_engagement_score`, `combined_engagement_score`, `engagement_tier`
+- **Seniority derivation fallback** — derived from designation/title when no explicit seniority source is present
+- **Identity-resolution fixes** — duplicate `unified_contact_id` collapse (8 → 0); P-180 LinkedIn over-match (584 false Datalabs matches removed via slug-regex fix that now handles any subdomain)
+- **Reverse-ETL column classification** — all 173 contact_360 columns mapped for push/format (`contact360_logic_sheet.csv`)
 
 ### 5.2 Remaining scope schedule
 
