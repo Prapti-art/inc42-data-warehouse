@@ -738,7 +738,6 @@ SELECT
         COALESCE(o.total_membership_orders, 0) * 50.0
         + COALESCE(es.total_paid_event_tickets, 0) * 30.0
         + COALESCE(o.total_addon_orders, 0) * 20.0
-        + COALESCE(o.total_revenue, 0) * 0.001
     , 1) AS paid_engagement_score,
 
     ROUND(
@@ -760,7 +759,7 @@ SELECT
         (COALESCE(o.total_membership_orders, 0) * 50.0
          + COALESCE(es.total_paid_event_tickets, 0) * 30.0
          + COALESCE(o.total_addon_orders, 0) * 20.0
-         + COALESCE(o.total_revenue, 0) * 0.001) * 2.0
+        ) * 2.0
         + (CASE WHEN c.daily_newsletter = 'subscribed' THEN 1 ELSE 0 END
            + CASE WHEN c.weekly_newsletter = 'subscribed' THEN 1 ELSE 0 END
            + CASE WHEN c.indepth_newsletter = 'subscribed' THEN 1 ELSE 0 END
@@ -778,8 +777,7 @@ SELECT
     CASE
         WHEN (COALESCE(o.total_membership_orders, 0) * 50.0
               + COALESCE(es.total_paid_event_tickets, 0) * 30.0
-              + COALESCE(o.total_addon_orders, 0) * 20.0
-              + COALESCE(o.total_revenue, 0) * 0.001) >= 50
+              + COALESCE(o.total_addon_orders, 0) * 20.0) >= 50
           OR (COALESCE(es.total_free_event_registrations, 0) * 8.0
               + COALESCE(f.total_form_submissions, 0) * 3.0
               + COALESCE(m.total_emails_opened, 0) * 0.5
