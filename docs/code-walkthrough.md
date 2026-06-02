@@ -1033,26 +1033,88 @@ The original walk-through below describes the orders/events/forms/marketing CTEs
 | `moengage_engagement` | Pulls 22 Moengage reachability/LTV/session/geo fields per email from `bronze.moengage_export`. |
 | `event_interest_signals` / `report_interest_signals` / `contact_sectors` / `interest_tags` | The 4-source interest-flag pipeline (events + reports/giveaways + company sector + newsletters → 14 boolean `interest_*` flags). |
 
-### Three-axis engagement scoring (in the final SELECT)
+### RFV engagement scoring (in the final SELECT)
+
+Scoring is **Recency × Frequency × Value** — R is a multiplier applied to F+V so a stale loyalist decays naturally over 24 months instead of staying `hot` forever.
+
+**Recency anchors** are precomputed in a `recency_anchors` CTE that consolidates per-contact:
+- `paid_anchor` = GREATEST(plus_expiry_date, paid_event_validity_anchor, last_completed_order_date)
+- `nonpaid_anchor` = GREATEST(free_event_validity_anchor, last_form_date, last_email_open_date, moengage_last_seen)
+
+The **event validity anchor** is the cleverest piece. For each (franchise, year) row in `silver.events`, we look up the **next edition's date** via `LEAD()` over the franchise calendar. If it exists, that's the anchor; if not, fall back to `event_date + 12 months`. So a 2024 D2C buyer stays current (R=1) until D2C 2025 actually appears in the data — and discontinued franchises (no later edition) start decaying 12 months after the contact's last attendance. Auto-detects both cases without manual flags.
 
 ```sql
--- paid axis: spend behavior
-ROUND(memberships*50 + paid_event_tickets*30 + addons*20 + revenue*0.001, 1) AS paid_engagement_score,
--- non-paid axis: content + reach
-ROUND(newsletters*10 + free_event_regs*8 + forms*3 + opens*0.5 + clicks*2
-      + CASE WHEN moengage_reachability_push IN ('300','100') THEN 5 ELSE 0 END, 1) AS nonpaid_engagement_score,
--- combined (paid weighted 2x)
-ROUND(paid*2 + nonpaid, 1) AS combined_engagement_score,
--- tier (top-down evaluation)
-CASE
-    WHEN (...paid score) >= 50 OR (...nonpaid score) >= 100 THEN 'hot'
-    WHEN total_orders > 0 OR paid_events > 0 OR newsletters >= 2 OR forms >= 3 OR free_events >= 1 THEN 'engaged'
-    WHEN newsletters >= 1 OR forms >= 1 OR opens >= 1 OR moengage_push IN ('300','100') THEN 'passive'
-    ELSE 'dormant'
-END AS engagement_tier,
+-- Per franchise: paid editions and their dates
+franchise_calendar AS (
+    SELECT event_franchise,
+           SAFE_CAST(event_edition AS INT64) AS edition_year,
+           MIN(interaction_date) AS edition_date
+    FROM {{ ref('events') }}
+    WHERE is_paid = TRUE AND event_franchise IS NOT NULL
+      AND SAFE_CAST(event_edition AS INT64) IS NOT NULL
+    GROUP BY event_franchise, edition_year
+),
+-- For each (franchise, year): the NEXT edition's date (NULL if none yet)
+franchise_next_edition AS (
+    SELECT event_franchise, edition_year, edition_date,
+        LEAD(edition_date) OVER (PARTITION BY event_franchise ORDER BY edition_year) AS next_edition_date
+    FROM franchise_calendar
+),
+-- Per contact, the latest validity-window expiry across all paid events
+contact_paid_event_anchor AS (
+    SELECT e.contact_key,
+        MAX(COALESCE(
+            fne.next_edition_date,
+            DATE_ADD(e.interaction_date, INTERVAL 12 MONTH)
+        )) AS paid_event_anchor
+    FROM {{ ref('events') }} e
+    LEFT JOIN franchise_next_edition fne USING(event_franchise)
+    WHERE e.is_paid = TRUE
+    GROUP BY e.contact_key
+),
 ```
 
-Distribution across 489K contacts: **hot 14,527 · engaged 61,739 · passive 330,029 · dormant 82,552.**
+(Mirror CTEs for `contact_free_event_anchor`, `contact_form_recency`, `contact_email_recency`.)
+
+**R multiplier** — linear decay over 24 months, clamped [0, 1]:
+```sql
+R = LEAST(1.0, GREATEST(0.0,
+    1.0 - DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 24.0))
+```
+
+**Final scores in the SELECT:**
+```sql
+-- paid_score = (F_paid + V_paid) × R_paid
+ROUND(
+    (memberships*50 + paid_events*30 + addons*20 + revenue*0.001)
+    * R_paid_multiplier
+, 1) AS paid_engagement_score,
+
+-- nonpaid_score = F_nonpaid × R_nonpaid
+ROUND(
+    (newsletters*10 + free_events*8 + forms*3 + opens*0.5 + clicks*2
+     + push_reachable_flag*5)
+    * R_nonpaid_multiplier
+, 1) AS nonpaid_engagement_score,
+
+-- combined = paid × 2 + nonpaid
+ROUND(paid_engagement_score*2 + nonpaid_engagement_score, 1) AS combined_engagement_score,
+```
+
+**Tier** (top-down):
+```sql
+CASE
+    WHEN paid_engagement_score >= 50 OR nonpaid_engagement_score >= 100 THEN 'hot'
+    WHEN (any order / paid event / ≥2 newsletters / ≥3 forms / ≥1 free event)
+         AND (paid_anchor OR nonpaid_anchor within last 18 months)        THEN 'engaged'
+    WHEN ≥1 newsletter / form / open / push-reachable                    THEN 'passive'
+    ELSE                                                                  'dormant'
+END
+```
+
+The 18-month recency guard on `engaged` is what slides lapsed loyalists down to `passive`.
+
+**Distribution across 489K contacts (post-RFV):** hot **6,428** · engaged **42,630** · passive **354,252** · dormant **86,101**. ~56% drop in `hot` vs the F-only baseline — exactly what RFV should do.
 
 ### Other notable changes
 - `event_names_purchased` / `paid_event_franchises` / `free_event_franchises` / `all_event_names` **removed** as redundant (year-stripped or pure-union duplicates of `paid_event_names` / `free_event_names` / `event_franchises`).

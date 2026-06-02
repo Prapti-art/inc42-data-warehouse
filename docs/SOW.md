@@ -36,7 +36,7 @@ The warehouse is operational and substantially expanded since the April baseline
 | `silver.events` — standalone event-engagement model | **NEW** ✅ — one row per (person, franchise, year, role), paid-wins dedup, refund=free, multi-year preserved |
 | Casing & value normalization (geo, seniority, designation, job function) | **NEW** ✅ — `clean_value` macro library + applied across silver.contacts / silver.companies |
 | Interest tagging (14 boolean flags) | **NEW** ✅ — driven by events + associated company sector + content/reports + newsletters |
-| Three-axis engagement scoring | **NEW** ✅ — `paid_engagement_score`, `nonpaid_engagement_score`, `combined_engagement_score`, `engagement_tier` (hot/engaged/passive/dormant) |
+| RFV engagement scoring (Recency × Frequency × Value) | **NEW** ✅ — `paid_engagement_score`, `nonpaid_engagement_score`, `combined_engagement_score`, `engagement_tier` (hot/engaged/passive/dormant). Auto-detected per-franchise event validity windows; linear 24-month recency decay; separate paid + nonpaid clocks; Plus-expiry-aware. Tier auto-demotes stale loyalists. |
 | Year-bearing paid/free event names | **NEW** ✅ — `paid_event_names`, `free_event_names`, `years_as_paid_attendee`, etc. |
 | Reverse-ETL column classification (push/format) | **NEW** ✅ — all 173 columns classified in `contact360_logic_sheet.csv` |
 | Datalabs LinkedIn-slug match (P-180 over-match bug) | **FIXED** ✅ — slug regex now handles any subdomain; 584 false matches removed |
@@ -237,7 +237,7 @@ Sources (7) → GCS Landing → BigQuery Bronze → dbt/PySpark → Silver → d
 - **Event revenue grain-sum** — multi-pass / multi-ticket buyers no longer undercounted
 - **Casing & value normalization** — `clean_value` macro library (scrub_sentinel, title_case_clean, normalize_city/state/country/seniority/designation/job_function, linkedin_slug) applied across silver.contacts + silver.companies
 - **14 interest tag flags** in `contact_360` — multi-source (events + associated company sector + content/reports/giveaways + newsletter subs)
-- **Three-axis engagement scoring** — `paid_engagement_score`, `nonpaid_engagement_score`, `combined_engagement_score`, `engagement_tier`
+- **RFV engagement scoring** — `paid_engagement_score`, `nonpaid_engagement_score`, `combined_engagement_score`, `engagement_tier`. Recency × Frequency × Value with per-franchise auto-detected validity windows (next-edition-date or 12-month grace), linear 24-month decay, separate paid + nonpaid clocks, Plus-membership-aware. Stale loyalists auto-demote.
 - **Seniority derivation fallback** — derived from designation/title when no explicit seniority source is present
 - **Identity-resolution fixes** — duplicate `unified_contact_id` collapse (8 → 0); P-180 LinkedIn over-match (584 false Datalabs matches removed via slug-regex fix that now handles any subdomain)
 - **Reverse-ETL column classification** — all 173 contact_360 columns mapped for push/format (`contact360_logic_sheet.csv`)

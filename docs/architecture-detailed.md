@@ -734,15 +734,55 @@ Each flag fires (TRUE) when **any** of four signal sources match:
 3. **Content consumed** — `fact_form_submissions` form_name/subcategory parsing (D2C Report, Fintech Report, IPO/Unicorn/Funding/VC ebooks/guides, EV giveaway, …)
 4. **Newsletter subscriptions** — e.g. TheOutline → `interest_d2c`, Markets/Moneyball → `interest_startup_ecosystem`
 
-### Three-axis engagement scoring
-| Column | Formula |
-|---|---|
-| `paid_engagement_score` | memberships × 50 + paid_events × 30 + addons × 20 + revenue × 0.001 |
-| `nonpaid_engagement_score` | newsletters × 10 + free_events × 8 + forms × 3 + opens × 0.5 + clicks × 2 + push_reachable × 5 |
-| `combined_engagement_score` | paid × 2 + nonpaid |
-| `engagement_tier` | hot / engaged / passive / dormant (threshold buckets on paid + non-paid axes) |
+### RFV engagement scoring (Recency × Frequency × Value)
 
-Distribution across 489K contacts: hot 14,527 · engaged 61,739 · passive 330,029 · dormant 82,552.
+Per-contact scores combine F (action counts), V (revenue), and R (recency decay). R is the multiplier — a 3-year-loyal-but-quiet contact slides `hot → engaged → passive` over time instead of staying `hot` forever.
+
+**Frequency components:**
+```
+F_paid    = memberships × 50 + paid_events × 30 + addons × 20
+F_nonpaid = newsletters × 10 + free_events × 8 + forms × 3
+          + opens × 0.5 + clicks × 2 + push_reachable × 5
+V_paid    = revenue × 0.001
+```
+
+**Recency anchor** — "when engagement value naturally expires," not when it happened:
+
+| Engagement type | Anchor |
+|---|---|
+| Active Plus / annual membership | `plus_expiry_date` (R = 1.0 while valid) |
+| Annual summit (D2C/GenAI/Fintech/MoneyX) | `COALESCE(next_franchise_edition_date, last_event + 12 months)` — auto-detects between-cycle vs discontinued |
+| Free event registration | Same logic |
+| Content (newsletter/form/open/click) | last action date |
+
+**Combined anchors:**
+```
+paid_anchor    = GREATEST(plus_expiry_date, paid_event_anchor, last_completed_order_date)
+nonpaid_anchor = GREATEST(free_event_anchor, last_form_date, last_open_date, moengage_last_seen)
+```
+
+**Decay** (linear over 24 months, future anchors clamp to R=1):
+```
+R = LEAST(1, GREATEST(0, 1 - months_since(anchor) / 24))
+```
+
+**Final scores:**
+```
+paid_engagement_score    = (F_paid + V_paid) × R_paid
+nonpaid_engagement_score =  F_nonpaid       × R_nonpaid
+combined_engagement_score = paid × 2 + nonpaid
+```
+
+**Tier:**
+
+| Tier | Condition |
+|---|---|
+| `hot` | R-multiplied `paid_score ≥ 50` OR `nonpaid_score ≥ 100` |
+| `engaged` | Order / paid event / ≥2 newsletters / ≥3 forms / ≥1 free event — AND anchor within last 18 months |
+| `passive` | ≥1 newsletter / form / open / push-reachable |
+| `dormant` | None of the above |
+
+**Distribution across 489K contacts (post-RFV):** hot 6,428 · engaged 42,630 · passive 354,252 · dormant 86,101. ~56% drop in `hot` vs the F-only baseline — stale loyalists correctly demoted.
 
 ### Moengage merge (8th identity source)
 Moengage emails feed identity-resolution (Steps 4 + 5 — email then phone). 22 Moengage engagement fields land on `contact_360` (push reachability android/ios/web, sessions, conversions, LTV, opt-ins, hard-bounce, last-seen geo). Cluster delta: +160K unique contacts after merge (148K Moengage-only + 12K cross-source matches).
