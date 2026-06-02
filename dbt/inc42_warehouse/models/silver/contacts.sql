@@ -220,6 +220,95 @@ hubspot AS (
         hubspot_modified_at
     FROM {{ ref('hubspot_contacts_latest') }}
     WHERE email IS NOT NULL AND email LIKE '%@%'
+),
+
+-- ── Moengage: LinkedIn extraction only (one row per email, most recent profile) ──
+-- Moengage CSV holds linkedin in 3 columns: linkedin_profile_url / linkedinurl / linkedin.
+-- This contact-side join is what surfaces those for event-buyer contacts who came
+-- in via WooCommerce/Gravity Forms (neither captures linkedin in source).
+moengage_li AS (
+    SELECT email, linkedin_url FROM (
+        SELECT
+            LOWER(TRIM(COALESCE(
+                NULLIF(email_standard, ''), NULLIF(work_email, ''),
+                NULLIF(personal_email, ''), NULLIF(plus_email, ''),
+                NULLIF(secondary_email, '')
+            ))) AS email,
+            COALESCE(
+                NULLIF(linkedin_profile_url, ''),
+                NULLIF(linkedinurl, ''),
+                NULLIF(linkedin, '')
+            ) AS linkedin_url,
+            ROW_NUMBER() OVER (
+                PARTITION BY LOWER(TRIM(COALESCE(
+                    NULLIF(email_standard, ''), NULLIF(work_email, ''),
+                    NULLIF(personal_email, ''), NULLIF(plus_email, ''),
+                    NULLIF(secondary_email, '')
+                )))
+                ORDER BY last_seen DESC NULLS LAST
+            ) AS rn
+        FROM {{ source('bronze', 'moengage_export') }}
+        WHERE COALESCE(linkedin_profile_url, linkedinurl, linkedin) IS NOT NULL
+          AND COALESCE(email_standard, work_email, personal_email, plus_email, secondary_email) IS NOT NULL
+    )
+    WHERE rn = 1 AND linkedin_url IS NOT NULL AND email IS NOT NULL
+),
+
+-- ── Gravity Forms: LinkedIn extraction across ALL forms via per-form field detection ──
+-- For each form, find the meta_key whose values look like LinkedIn URLs (>=30% match
+-- linkedin.com/in/ pattern) and the meta_key whose values look like emails (>=50%).
+-- Join the two per entry → one (email, linkedin) per submission. Dedupe to one per
+-- email, keeping the most recent. Mirrors the email-field detection used in PySpark.
+gravity_linkedin AS (
+    WITH email_field_per_form AS (
+        SELECT form_id, meta_key FROM (
+            SELECT form_id, meta_key,
+                COUNTIF(REGEXP_CONTAINS(meta_value, r'@[a-zA-Z0-9.-]+\.')) AS email_cnt,
+                COUNT(*) AS total,
+                ROW_NUMBER() OVER (
+                    PARTITION BY form_id
+                    ORDER BY COUNTIF(REGEXP_CONTAINS(meta_value, r'@[a-zA-Z0-9.-]+\.')) DESC
+                ) AS rn
+            FROM {{ source('bronze', 'gravity_forms_entry_meta') }}
+            GROUP BY form_id, meta_key
+            HAVING total > 50 AND SAFE_DIVIDE(email_cnt, total) > 0.5
+        )
+        WHERE rn = 1
+    ),
+    linkedin_field_per_form AS (
+        SELECT form_id, meta_key FROM (
+            SELECT form_id, meta_key,
+                COUNTIF(REGEXP_CONTAINS(LOWER(meta_value), r'linkedin\.com/in/')) AS li_cnt,
+                COUNT(*) AS total,
+                ROW_NUMBER() OVER (
+                    PARTITION BY form_id
+                    ORDER BY COUNTIF(REGEXP_CONTAINS(LOWER(meta_value), r'linkedin\.com/in/')) DESC
+                ) AS rn
+            FROM {{ source('bronze', 'gravity_forms_entry_meta') }}
+            GROUP BY form_id, meta_key
+            HAVING total > 20 AND SAFE_DIVIDE(li_cnt, total) > 0.3
+        )
+        WHERE rn = 1
+    ),
+    extracted AS (
+        SELECT
+            LOWER(TRIM(em.meta_value)) AS email,
+            li.meta_value AS linkedin_url,
+            e.date_created,
+            ROW_NUMBER() OVER (
+                PARTITION BY LOWER(TRIM(em.meta_value)) ORDER BY e.date_created DESC
+            ) AS rn
+        FROM {{ source('bronze', 'gravity_forms_entries') }} e
+        JOIN email_field_per_form ef ON e.form_id = ef.form_id
+        JOIN linkedin_field_per_form lf ON e.form_id = lf.form_id
+        JOIN {{ source('bronze', 'gravity_forms_entry_meta') }} em
+          ON em.entry_id = e.id AND em.form_id = e.form_id AND em.meta_key = ef.meta_key
+        JOIN {{ source('bronze', 'gravity_forms_entry_meta') }} li
+          ON li.entry_id = e.id AND li.form_id = e.form_id AND li.meta_key = lf.meta_key
+        WHERE em.meta_value LIKE '%@%'
+          AND LOWER(li.meta_value) LIKE '%linkedin.com/in/%'
+    )
+    SELECT email, linkedin_url FROM extracted WHERE rn = 1
 )
 
 SELECT
@@ -260,8 +349,8 @@ SELECT
     -- ═══ INDUSTRY ═══ (Inc42 44K > CIO 8K > GF88 87K > Tally)
     {{ scrub_sentinel('COALESCE(NULLIF(i.industry, ""), NULLIF(c.industry, ""), NULLIF(gf.industry, ""), NULLIF(t.sector, ""))', allow_short=False) }} AS industry,
 
-    -- ═══ LINKEDIN ═══ (Inc42 24K > CIO 1.7K > Tally > HubSpot)
-    {{ scrub_sentinel('COALESCE(NULLIF(i.linkedin_url, ""), NULLIF(c.linkedin_url, ""), NULLIF(t.linkedin_url, ""), NULLIF(h.linkedin_url, ""))', allow_short=False) }} AS linkedin_url,
+    -- ═══ LINKEDIN ═══ (Inc42 24K > CIO 1.7K > Tally > HubSpot > Gravity Forms > Moengage)
+    {{ scrub_sentinel('COALESCE(NULLIF(i.linkedin_url, ""), NULLIF(c.linkedin_url, ""), NULLIF(t.linkedin_url, ""), NULLIF(h.linkedin_url, ""), NULLIF(gl.linkedin_url, ""), NULLIF(ml.linkedin_url, ""))', allow_short=False) }} AS linkedin_url,
 
     -- ═══ LOCATION (normalized) ═══
     {{ normalize_city('COALESCE(NULLIF(i.city, ""), NULLIF(c.city, ""), NULLIF(w.city, ""), NULLIF(t.city, ""), NULLIF(h.city, ""))') }} AS city,
@@ -379,6 +468,8 @@ LEFT JOIN woo w ON u.primary_email = w.email
 LEFT JOIN tally t ON u.primary_email = t.email
 LEFT JOIN gravity_form88 gf ON u.primary_email = gf.email
 LEFT JOIN hubspot h ON u.primary_email = h.email
+LEFT JOIN gravity_linkedin gl ON u.primary_email = gl.email
+LEFT JOIN moengage_li ml ON u.primary_email = ml.email
 
 -- Exclude test/junk contacts
 WHERE u.primary_email IS NOT NULL
