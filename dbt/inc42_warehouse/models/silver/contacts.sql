@@ -276,6 +276,8 @@ gravity_linkedin AS (
         WHERE rn = 1
     ),
     linkedin_field_per_form AS (
+        -- Tightened to >= 70% match (was 30%) so borderline "team bio"-style
+        -- free-text fields are no longer flagged as the LinkedIn field.
         SELECT form_id, meta_key FROM (
             SELECT form_id, meta_key,
                 COUNTIF(REGEXP_CONTAINS(LOWER(meta_value), r'linkedin\.com/in/')) AS li_cnt,
@@ -286,7 +288,7 @@ gravity_linkedin AS (
                 ) AS rn
             FROM {{ source('bronze', 'gravity_forms_entry_meta') }}
             GROUP BY form_id, meta_key
-            HAVING total > 20 AND SAFE_DIVIDE(li_cnt, total) > 0.3
+            HAVING total > 20 AND SAFE_DIVIDE(li_cnt, total) >= 0.7
         )
         WHERE rn = 1
     ),
@@ -308,7 +310,11 @@ gravity_linkedin AS (
         WHERE em.meta_value LIKE '%@%'
           AND LOWER(li.meta_value) LIKE '%linkedin.com/in/%'
     )
-    SELECT email, linkedin_url FROM extracted WHERE rn = 1
+    -- Final guard: even after the tightened field detection, each row's value
+    -- must actually contain 'linkedin.com' to be pushed forward. Belt-and-braces
+    -- against any junk that slips through the per-form detection.
+    SELECT email, linkedin_url FROM extracted
+    WHERE rn = 1 AND LOWER(linkedin_url) LIKE '%linkedin.com%'
 )
 
 SELECT
