@@ -253,23 +253,32 @@ orders AS (
 -- deduped by contact x franchise x edition x role). Replaces the old
 -- `events` CTE + event-specific fields in `orders`.
 events_summary AS (
+    -- All event_* aggregates exclude event_format='program' (FAST42, BigShift,
+    -- BrandLabs, Startup Programs, D2CX Converge) because programs are cohort-
+    -- based initiatives, not time-bound events — they have their own dedicated
+    -- aggregates below (total_programs_joined / programs_joined). Previously
+    -- FAST42 etc. double-counted in both event_* and program_* fields.
     SELECT
         contact_key,
-        COUNT(*) AS total_event_interactions,
-        COUNTIF(is_paid) AS total_paid_event_tickets,
-        COUNTIF(NOT is_paid) AS total_free_event_registrations,
-        COUNT(DISTINCT event_franchise) AS event_franchise_count,
-        COUNT(DISTINCT CONCAT(event_franchise, '|', IFNULL(event_edition,''))) AS distinct_franchise_editions,
-        STRING_AGG(DISTINCT event_franchise, ', ') AS event_franchises,
-        -- Loyalty / recency (numeric editions only — regional editions like "Hyderabad" excluded)
-        MIN(SAFE_CAST(event_edition AS INT64)) AS first_event_year,
-        MAX(SAFE_CAST(event_edition AS INT64)) AS last_event_year,
-        COUNT(DISTINCT CASE WHEN is_paid THEN SAFE_CAST(event_edition AS INT64) END) AS years_as_paid_attendee,
-        SUM(CASE WHEN is_paid AND attendance_status = 'paid' THEN net_revenue ELSE 0 END) AS total_event_revenue,
-        SUM(refund_amount) AS total_event_refunds,
+        COUNTIF(event_format != 'program') AS total_event_interactions,
+        COUNTIF(is_paid AND event_format != 'program') AS total_paid_event_tickets,
+        COUNTIF(NOT is_paid AND event_format != 'program') AS total_free_event_registrations,
+        COUNT(DISTINCT CASE WHEN event_format != 'program' THEN event_franchise END) AS event_franchise_count,
+        COUNT(DISTINCT CASE WHEN event_format != 'program'
+            THEN CONCAT(event_franchise, '|', IFNULL(event_edition,'')) END) AS distinct_franchise_editions,
+        STRING_AGG(DISTINCT CASE WHEN event_format != 'program' THEN event_franchise END, ', ') AS event_franchises,
+        -- Loyalty / recency (events only, numeric editions only)
+        MIN(CASE WHEN event_format != 'program' THEN SAFE_CAST(event_edition AS INT64) END) AS first_event_year,
+        MAX(CASE WHEN event_format != 'program' THEN SAFE_CAST(event_edition AS INT64) END) AS last_event_year,
+        COUNT(DISTINCT CASE WHEN is_paid AND event_format != 'program'
+            THEN SAFE_CAST(event_edition AS INT64) END) AS years_as_paid_attendee,
+        SUM(CASE WHEN is_paid AND attendance_status = 'paid' AND event_format != 'program'
+            THEN net_revenue ELSE 0 END) AS total_event_revenue,
+        SUM(CASE WHEN event_format != 'program' THEN refund_amount ELSE 0 END) AS total_event_refunds,
+        -- Programs: separate aggregate (cohort-based initiatives)
         COUNTIF(event_format = 'program') AS total_programs_joined,
         STRING_AGG(DISTINCT CASE WHEN event_format = 'program' THEN event_franchise END, ', ') AS programs_joined,
-        MAX(interaction_date) AS last_event_interaction_date
+        MAX(CASE WHEN event_format != 'program' THEN interaction_date END) AS last_event_interaction_date
     FROM {{ ref('events') }}
     GROUP BY contact_key
 ),
@@ -279,6 +288,8 @@ events_summary AS (
 -- a person who registered (free, role='registrant') AND paid (role='attendee')
 -- for the same summit-year would have the event appear in BOTH lists.
 event_year_grain AS (
+    -- Excludes programs (event_format='program') for the same reason as
+    -- events_summary — paid/free_event_names should not include FAST42 etc.
     SELECT
         contact_key,
         event_franchise,
@@ -286,6 +297,7 @@ event_year_grain AS (
         LOGICAL_OR(is_paid) AS any_paid
     FROM {{ ref('events') }}
     WHERE event_franchise IS NOT NULL
+      AND event_format != 'program'
     GROUP BY contact_key, event_franchise, event_edition
 ),
 
