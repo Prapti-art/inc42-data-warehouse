@@ -387,6 +387,95 @@ moengage_engagement AS (
 ),
 
 -- ═══════════════════════════════════════════════
+-- RFV RECENCY ANCHORS — added 2026-06
+-- ═══════════════════════════════════════════════
+-- Recency is anchored to "when an engagement's value naturally expires," not
+-- when it happened. For annual summits the anchor is the NEXT edition's date
+-- (auto-detected from the data) — falling back to last_event + 12 months when
+-- no next edition has appeared yet. That gives a 12-month grace window after
+-- attendance, then decay begins, regardless of whether the franchise is "between
+-- cycles" or genuinely discontinued. The system can't tell the difference and
+-- doesn't need to.
+
+-- Franchise calendar: which paid editions actually ran (date = first ticket sold).
+franchise_calendar AS (
+    SELECT
+        event_franchise,
+        SAFE_CAST(event_edition AS INT64) AS edition_year,
+        MIN(interaction_date) AS edition_date
+    FROM {{ ref('events') }}
+    WHERE is_paid = TRUE
+      AND event_franchise IS NOT NULL
+      AND SAFE_CAST(event_edition AS INT64) IS NOT NULL
+    GROUP BY event_franchise, edition_year
+),
+
+-- For each (franchise, year), the next-edition's date (NULL if none yet).
+franchise_next_edition AS (
+    SELECT
+        event_franchise,
+        edition_year,
+        edition_date,
+        LEAD(edition_date) OVER (
+            PARTITION BY event_franchise ORDER BY edition_year
+        ) AS next_edition_date
+    FROM franchise_calendar
+),
+
+-- Per contact, the LATEST validity-window expiry across all PAID events.
+-- Per (franchise, year) row: anchor = COALESCE(next_edition_date, event_date + 12mo).
+contact_paid_event_anchor AS (
+    SELECT
+        e.contact_key,
+        MAX(COALESCE(
+            fne.next_edition_date,
+            DATE_ADD(e.interaction_date, INTERVAL 12 MONTH)
+        )) AS paid_event_anchor
+    FROM {{ ref('events') }} e
+    LEFT JOIN franchise_next_edition fne
+      ON fne.event_franchise = e.event_franchise
+     AND fne.edition_year    = SAFE_CAST(e.event_edition AS INT64)
+    WHERE e.is_paid = TRUE
+    GROUP BY e.contact_key
+),
+
+-- Same logic for FREE events.
+contact_free_event_anchor AS (
+    SELECT
+        e.contact_key,
+        MAX(COALESCE(
+            fne.next_edition_date,
+            DATE_ADD(e.interaction_date, INTERVAL 12 MONTH)
+        )) AS free_event_anchor
+    FROM {{ ref('events') }} e
+    LEFT JOIN franchise_next_edition fne
+      ON fne.event_franchise = e.event_franchise
+     AND fne.edition_year    = SAFE_CAST(e.event_edition AS INT64)
+    WHERE e.is_paid = FALSE
+    GROUP BY e.contact_key
+),
+
+-- Last form-submission and last email-open per contact (nonpaid signals).
+contact_form_recency AS (
+    SELECT
+        contact_key,
+        MAX(SAFE.PARSE_DATE('%Y%m%d', CAST(submit_date_key AS STRING))) AS last_form_date
+    FROM {{ ref('fact_form_submissions') }}
+    WHERE submit_date_key IS NOT NULL
+    GROUP BY contact_key
+),
+
+contact_email_recency AS (
+    SELECT
+        contact_key,
+        MAX(CASE WHEN opened = 1
+                 THEN SAFE.PARSE_DATE('%Y%m%d', CAST(activity_date_key AS STRING)) END) AS last_email_open_date
+    FROM {{ ref('fact_marketing_touchpoints') }}
+    WHERE activity_date_key IS NOT NULL
+    GROUP BY contact_key
+),
+
+-- ═══════════════════════════════════════════════
 -- PROPERTY INTERACTIONS (properly categorized)
 -- ═══════════════════════════════════════════════
 properties AS (
@@ -545,6 +634,37 @@ interest_tags AS (
     FROM contact_sectors cs
     LEFT JOIN event_interest_signals es USING(contact_key)
     LEFT JOIN report_interest_signals rs USING(contact_key)
+),
+
+-- ═══════════════════════════════════════════════
+-- RECENCY ANCHORS — consolidate per contact
+-- ═══════════════════════════════════════════════
+-- paid_anchor = LATEST of: Plus expiry, paid-event validity window, last non-event order
+-- nonpaid_anchor = LATEST of: free-event validity window, last form, last open, moengage last_seen
+-- For NULL inputs we fall back to '1900-01-01' so GREATEST works (NULL would propagate).
+-- A '1900-01-01' anchor produces ~1500 months_since → R = 0 → no recency credit, correct.
+recency_anchors AS (
+    SELECT
+        c.contact_key,
+        GREATEST(
+            IFNULL(SAFE.PARSE_DATE('%Y-%m-%d', c.plus_expiry_date), DATE '1900-01-01'),
+            IFNULL(cpea.paid_event_anchor, DATE '1900-01-01'),
+            IFNULL(SAFE.PARSE_DATE('%Y%m%d', CAST(o.last_completed_order_date_key AS STRING)),
+                   DATE '1900-01-01')
+        ) AS paid_anchor,
+        GREATEST(
+            IFNULL(cfea.free_event_anchor, DATE '1900-01-01'),
+            IFNULL(cfr.last_form_date, DATE '1900-01-01'),
+            IFNULL(cer.last_email_open_date, DATE '1900-01-01'),
+            IFNULL(SAFE_CAST(SUBSTR(me.moengage_last_seen, 1, 10) AS DATE), DATE '1900-01-01')
+        ) AS nonpaid_anchor
+    FROM contact c
+    LEFT JOIN contact_paid_event_anchor cpea ON c.contact_key = cpea.contact_key
+    LEFT JOIN contact_free_event_anchor cfea ON c.contact_key = cfea.contact_key
+    LEFT JOIN orders o                       ON c.contact_key = o.contact_key
+    LEFT JOIN contact_form_recency cfr       ON c.contact_key = cfr.contact_key
+    LEFT JOIN contact_email_recency cer      ON c.contact_key = cer.contact_key
+    LEFT JOIN moengage_engagement me         ON LOWER(c.email) = me.email
 )
 
 -- ═══════════════════════════════════════════════
@@ -734,54 +854,94 @@ SELECT
     --                                push reachability)
     --   combined_engagement_score = paid * 2 + nonpaid  (paid weighted higher)
     --   engagement_tier          -> dormant / passive / engaged / hot
-    ROUND(
-        COALESCE(o.total_membership_orders, 0) * 50.0
-        + COALESCE(es.total_paid_event_tickets, 0) * 30.0
-        + COALESCE(o.total_addon_orders, 0) * 20.0
-    , 1) AS paid_engagement_score,
-
-    ROUND(
-        (CASE WHEN c.daily_newsletter = 'subscribed' THEN 1 ELSE 0 END
-         + CASE WHEN c.weekly_newsletter = 'subscribed' THEN 1 ELSE 0 END
-         + CASE WHEN c.indepth_newsletter = 'subscribed' THEN 1 ELSE 0 END
-         + CASE WHEN c.moneyball_newsletter = 'subscribed' THEN 1 ELSE 0 END
-         + CASE WHEN c.theoutline_newsletter = 'subscribed' THEN 1 ELSE 0 END
-         + CASE WHEN c.markets_newsletter = 'subscribed' THEN 1 ELSE 0 END
-        ) * 10.0
-        + COALESCE(es.total_free_event_registrations, 0) * 8.0
-        + COALESCE(f.total_form_submissions, 0) * 3.0
-        + COALESCE(m.total_emails_opened, 0) * 0.5
-        + COALESCE(m.total_emails_clicked, 0) * 2.0
-        + CASE WHEN me.moengage_reachability_push IN ('300','100') THEN 5.0 ELSE 0 END
-    , 1) AS nonpaid_engagement_score,
-
+    -- RFV scoring (added 2026-06):
+    -- paid_score    = (F_paid + V_paid) × R_paid
+    -- nonpaid_score = F_nonpaid × R_nonpaid
+    -- combined      = paid_score × 2 + nonpaid_score
+    -- R is a linear decay over 24 months from the recency anchor (clamped [0,1]).
+    -- Future anchors (e.g. active Plus expiry) clamp to R=1.0.
     ROUND(
         (COALESCE(o.total_membership_orders, 0) * 50.0
          + COALESCE(es.total_paid_event_tickets, 0) * 30.0
          + COALESCE(o.total_addon_orders, 0) * 20.0
+         + COALESCE(o.total_revenue, 0) * 0.001
+        )
+        * LEAST(1.0, GREATEST(0.0,
+            1.0 - DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 24.0))
+    , 1) AS paid_engagement_score,
+
+    ROUND(
+        ((CASE WHEN c.daily_newsletter = 'subscribed' THEN 1 ELSE 0 END
+          + CASE WHEN c.weekly_newsletter = 'subscribed' THEN 1 ELSE 0 END
+          + CASE WHEN c.indepth_newsletter = 'subscribed' THEN 1 ELSE 0 END
+          + CASE WHEN c.moneyball_newsletter = 'subscribed' THEN 1 ELSE 0 END
+          + CASE WHEN c.theoutline_newsletter = 'subscribed' THEN 1 ELSE 0 END
+          + CASE WHEN c.markets_newsletter = 'subscribed' THEN 1 ELSE 0 END
+         ) * 10.0
+         + COALESCE(es.total_free_event_registrations, 0) * 8.0
+         + COALESCE(f.total_form_submissions, 0) * 3.0
+         + COALESCE(m.total_emails_opened, 0) * 0.5
+         + COALESCE(m.total_emails_clicked, 0) * 2.0
+         + CASE WHEN me.moengage_reachability_push IN ('300','100') THEN 5.0 ELSE 0 END
+        )
+        * LEAST(1.0, GREATEST(0.0,
+            1.0 - DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 24.0))
+    , 1) AS nonpaid_engagement_score,
+
+    ROUND(
+        ((COALESCE(o.total_membership_orders, 0) * 50.0
+          + COALESCE(es.total_paid_event_tickets, 0) * 30.0
+          + COALESCE(o.total_addon_orders, 0) * 20.0
+          + COALESCE(o.total_revenue, 0) * 0.001
+         )
+         * LEAST(1.0, GREATEST(0.0,
+             1.0 - DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 24.0))
         ) * 2.0
-        + (CASE WHEN c.daily_newsletter = 'subscribed' THEN 1 ELSE 0 END
-           + CASE WHEN c.weekly_newsletter = 'subscribed' THEN 1 ELSE 0 END
-           + CASE WHEN c.indepth_newsletter = 'subscribed' THEN 1 ELSE 0 END
-           + CASE WHEN c.moneyball_newsletter = 'subscribed' THEN 1 ELSE 0 END
-           + CASE WHEN c.theoutline_newsletter = 'subscribed' THEN 1 ELSE 0 END
-           + CASE WHEN c.markets_newsletter = 'subscribed' THEN 1 ELSE 0 END
-          ) * 10.0
-        + COALESCE(es.total_free_event_registrations, 0) * 8.0
-        + COALESCE(f.total_form_submissions, 0) * 3.0
-        + COALESCE(m.total_emails_opened, 0) * 0.5
-        + COALESCE(m.total_emails_clicked, 0) * 2.0
-        + CASE WHEN me.moengage_reachability_push IN ('300','100') THEN 5.0 ELSE 0 END
+        + (
+          ((CASE WHEN c.daily_newsletter = 'subscribed' THEN 1 ELSE 0 END
+            + CASE WHEN c.weekly_newsletter = 'subscribed' THEN 1 ELSE 0 END
+            + CASE WHEN c.indepth_newsletter = 'subscribed' THEN 1 ELSE 0 END
+            + CASE WHEN c.moneyball_newsletter = 'subscribed' THEN 1 ELSE 0 END
+            + CASE WHEN c.theoutline_newsletter = 'subscribed' THEN 1 ELSE 0 END
+            + CASE WHEN c.markets_newsletter = 'subscribed' THEN 1 ELSE 0 END
+           ) * 10.0
+           + COALESCE(es.total_free_event_registrations, 0) * 8.0
+           + COALESCE(f.total_form_submissions, 0) * 3.0
+           + COALESCE(m.total_emails_opened, 0) * 0.5
+           + COALESCE(m.total_emails_clicked, 0) * 2.0
+           + CASE WHEN me.moengage_reachability_push IN ('300','100') THEN 5.0 ELSE 0 END
+          )
+          * LEAST(1.0, GREATEST(0.0,
+              1.0 - DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 24.0))
+        )
     , 1) AS combined_engagement_score,
 
+    -- Tier: thresholds are evaluated AGAINST the R-multiplied scores so decay
+    -- naturally demotes stale contacts. "engaged" also requires recent activity
+    -- (anchor within last 18 months) so long-lapsed loyalists slide to passive.
     CASE
-        WHEN (COALESCE(o.total_membership_orders, 0) * 50.0
-              + COALESCE(es.total_paid_event_tickets, 0) * 30.0
-              + COALESCE(o.total_addon_orders, 0) * 20.0) >= 50
-          OR (COALESCE(es.total_free_event_registrations, 0) * 8.0
-              + COALESCE(f.total_form_submissions, 0) * 3.0
-              + COALESCE(m.total_emails_opened, 0) * 0.5
-              + COALESCE(m.total_emails_clicked, 0) * 2.0) >= 100
+        WHEN ((COALESCE(o.total_membership_orders, 0) * 50.0
+               + COALESCE(es.total_paid_event_tickets, 0) * 30.0
+               + COALESCE(o.total_addon_orders, 0) * 20.0
+               + COALESCE(o.total_revenue, 0) * 0.001)
+              * LEAST(1.0, GREATEST(0.0,
+                  1.0 - DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 24.0))
+             ) >= 50
+          OR (((CASE WHEN c.daily_newsletter='subscribed' THEN 1 ELSE 0 END
+                + CASE WHEN c.weekly_newsletter='subscribed' THEN 1 ELSE 0 END
+                + CASE WHEN c.indepth_newsletter='subscribed' THEN 1 ELSE 0 END
+                + CASE WHEN c.moneyball_newsletter='subscribed' THEN 1 ELSE 0 END
+                + CASE WHEN c.theoutline_newsletter='subscribed' THEN 1 ELSE 0 END
+                + CASE WHEN c.markets_newsletter='subscribed' THEN 1 ELSE 0 END
+               ) * 10.0
+               + COALESCE(es.total_free_event_registrations, 0) * 8.0
+               + COALESCE(f.total_form_submissions, 0) * 3.0
+               + COALESCE(m.total_emails_opened, 0) * 0.5
+               + COALESCE(m.total_emails_clicked, 0) * 2.0
+               + CASE WHEN me.moengage_reachability_push IN ('300','100') THEN 5.0 ELSE 0 END)
+              * LEAST(1.0, GREATEST(0.0,
+                  1.0 - DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 24.0))
+             ) >= 100
         THEN 'hot'
         WHEN (COALESCE(o.total_orders, 0) > 0
               OR COALESCE(es.total_paid_event_tickets, 0) > 0
@@ -793,6 +953,8 @@ SELECT
                   + CASE WHEN c.markets_newsletter='subscribed' THEN 1 ELSE 0 END) >= 2
               OR COALESCE(f.total_form_submissions, 0) >= 3
               OR COALESCE(es.total_free_event_registrations, 0) >= 1)
+          AND (DATE_DIFF(CURRENT_DATE(), ra.paid_anchor,    MONTH) <= 18
+            OR DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) <= 18)
         THEN 'engaged'
         WHEN (CASE WHEN c.daily_newsletter='subscribed' THEN 1 ELSE 0 END
               + CASE WHEN c.weekly_newsletter='subscribed' THEN 1 ELSE 0 END
@@ -887,6 +1049,7 @@ LEFT JOIN forms f ON c.contact_key = f.contact_key
 LEFT JOIN marketing m ON c.contact_key = m.contact_key
 LEFT JOIN property_agg p ON c.contact_key = p.contact_key
 LEFT JOIN moengage_engagement me ON LOWER(c.email) = me.email
+LEFT JOIN recency_anchors ra ON c.contact_key = ra.contact_key
 
 -- Company enrichment (via company name)
 LEFT JOIN company_match cm ON LOWER(TRIM(c.company_name)) = cm.company_name_lower
