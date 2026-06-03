@@ -307,9 +307,9 @@ event_names_clean AS (
         STRING_AGG(DISTINCT CASE WHEN any_paid
             THEN CONCAT(event_franchise, ' ', IFNULL(event_edition, '')) END, ', ') AS paid_event_names,
         STRING_AGG(DISTINCT CASE WHEN NOT any_paid
-            THEN CONCAT(event_franchise, ' ', IFNULL(event_edition, '')) END, ', ') AS free_event_names,
+            THEN CONCAT(event_franchise, ' ', IFNULL(event_edition, '')) END, ', ') AS registered_event_names,
         COUNTIF(any_paid) AS total_paid_events,
-        COUNTIF(NOT any_paid) AS total_free_events,
+        COUNTIF(NOT any_paid) AS total_registered_events,
         COUNT(*) AS total_events_engaged
     FROM event_year_grain
     GROUP BY contact_key
@@ -816,9 +816,12 @@ SELECT
     -- all_event_names / paid_event_franchises / free_event_franchises dropped:
     -- they were pure unions / year-stripped duplicates of these two + event_franchises.
     enc.paid_event_names,
-    enc.free_event_names,
+    -- "registered" rather than "free" — includes anyone who showed intent
+    -- (filled a registration form, abandoned a cart, refunded a ticket)
+    -- regardless of whether money changed hands.
+    enc.registered_event_names,
     COALESCE(enc.total_paid_events, 0) AS total_paid_events,
-    COALESCE(enc.total_free_events, 0) AS total_free_events,
+    COALESCE(enc.total_registered_events, 0) AS total_registered_events,
     COALESCE(enc.total_events_engaged, 0) AS total_events_engaged,
     -- Loyalty / recency
     es.first_event_year,
