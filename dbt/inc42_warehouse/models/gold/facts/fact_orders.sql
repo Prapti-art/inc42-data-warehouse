@@ -12,7 +12,7 @@
 -- columns. order_meta_pivoted CTE removed (was meta-key pivoting; no longer
 -- needed). order_currency and billing_gst aren't in the flat schema → NULL.
 
-WITH order_items AS (
+order_items AS (
     SELECT
         oi.order_item_id,
         oi.order_id,
