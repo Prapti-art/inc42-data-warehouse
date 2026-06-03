@@ -120,33 +120,32 @@ customerio AS (
 ),
 
 -- ── WooCommerce: order_meta (pivoted, deduped to latest order per email) ──
--- bronze.woocommerce_orders was flattened upstream — it now exposes billing_* columns
--- directly. No need to join the meta table. Pick most recent order per email.
 woo AS (
     SELECT email, first_name, last_name, phone, company_name, city, state, country,
            seniority, gst, address, postcode
     FROM (
         SELECT
-            LOWER(TRIM(billing_email))  AS email,
-            billing_first_name          AS first_name,
-            billing_last_name           AS last_name,
-            billing_phone               AS phone,
-            billing_company             AS company_name,
-            billing_city                AS city,
-            billing_state               AS state,
-            billing_country             AS country,
-            CAST(NULL AS STRING)        AS seniority,
-            CAST(NULL AS STRING)        AS gst,
-            CAST(NULL AS STRING)        AS address,
-            CAST(NULL AS STRING)        AS postcode,
+            LOWER(TRIM(MAX(CASE WHEN m.meta_key = '_billing_email' THEN m.meta_value END))) AS email,
+            MAX(CASE WHEN m.meta_key = '_billing_first_name' THEN m.meta_value END) AS first_name,
+            MAX(CASE WHEN m.meta_key = '_billing_last_name' THEN m.meta_value END) AS last_name,
+            MAX(CASE WHEN m.meta_key = '_billing_phone' THEN m.meta_value END) AS phone,
+            MAX(CASE WHEN m.meta_key = '_billing_company' THEN m.meta_value END) AS company_name,
+            MAX(CASE WHEN m.meta_key = '_billing_city' THEN m.meta_value END) AS city,
+            MAX(CASE WHEN m.meta_key = '_billing_state' THEN m.meta_value END) AS state,
+            MAX(CASE WHEN m.meta_key = '_billing_country' THEN m.meta_value END) AS country,
+            MAX(CASE WHEN m.meta_key IN ('_billing_seniority', 'billing_seniority') THEN m.meta_value END) AS seniority,
+            MAX(CASE WHEN m.meta_key = '_billing_gst' THEN m.meta_value END) AS gst,
+            MAX(CASE WHEN m.meta_key = '_billing_address_1' THEN m.meta_value END) AS address,
+            MAX(CASE WHEN m.meta_key = '_billing_postcode' THEN m.meta_value END) AS postcode,
             ROW_NUMBER() OVER (
-                PARTITION BY LOWER(TRIM(billing_email))
-                ORDER BY order_date DESC
+                PARTITION BY LOWER(TRIM(MAX(CASE WHEN m.meta_key = '_billing_email' THEN m.meta_value END)))
+                ORDER BY o.post_date DESC
             ) AS rn
-        FROM {{ source('bronze', 'woocommerce_orders') }}
-        WHERE billing_email IS NOT NULL AND billing_email != ''
+        FROM {{ source('bronze', 'woocommerce_orders') }} o
+        JOIN {{ source('bronze', 'woocommerce_order_meta') }} m ON o.ID = m.post_id
+        GROUP BY o.ID, o.post_date
     )
-    WHERE rn = 1
+    WHERE rn = 1 AND email IS NOT NULL
 ),
 
 -- ── Tally: dedup to one row per email (latest submission wins) ──
