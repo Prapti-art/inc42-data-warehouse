@@ -8,6 +8,13 @@ WITH contact AS (
 -- ═══════════════════════════════════════════════
 -- COMPANY ENRICHMENT (via company name match)
 -- ═══════════════════════════════════════════════
+-- bronze.dl_company_table was flattened upstream (June 2026):
+--   city/state/country     -> hq_city / hq_state (no country column anymore)
+--   founded_date           -> founded_year (still INTEGER)
+--   linkedin / tags        -> dropped (no longer in the source)
+--   last_modified_date     -> _ingested_at (use that for recency ordering)
+-- company_country / linkedin / tags are surfaced as NULL until they're either
+-- re-added upstream or backfilled from another source.
 company_match AS (
     SELECT company_name_lower, company_uuid,
            dl_sub_sector, dl_business_model,
@@ -19,14 +26,14 @@ company_match AS (
             ct.company_uuid,
             ct.sub_sector AS dl_sub_sector,
             ct.business_model AS dl_business_model,
-            ct.city AS dl_company_city,
-            ct.state AS dl_company_state,
-            ct.country AS dl_company_country,
-            ct.founded_date AS dl_founded_year,
+            ct.hq_city AS dl_company_city,
+            ct.hq_state AS dl_company_state,
+            CAST(NULL AS STRING) AS dl_company_country,
+            ct.founded_year AS dl_founded_year,
             ct.website AS dl_company_website,
-            ct.linkedin AS dl_company_linkedin,
-            ct.tags AS dl_company_tags,
-            ROW_NUMBER() OVER (PARTITION BY LOWER(TRIM(ct.name)) ORDER BY ct.last_modified_date DESC) AS rn
+            CAST(NULL AS STRING) AS dl_company_linkedin,
+            CAST(NULL AS STRING) AS dl_company_tags,
+            ROW_NUMBER() OVER (PARTITION BY LOWER(TRIM(ct.name)) ORDER BY ct._ingested_at DESC) AS rn
         FROM {{ source('bronze', 'dl_company_table') }} ct
         WHERE ct.name IS NOT NULL
     )

@@ -1,21 +1,28 @@
 -- Silver companies: Datalabs company_table enriched with funding, financials, employees
 
+-- bronze.dl_company_table was flattened upstream (June 2026):
+--   city/state/country  -> hq_city / hq_state (no country)
+--   founded_date        -> founded_year (already INTEGER)
+--   tags / linkedin / slug  -> dropped from source (NULL placeholders here)
+-- Several new columns are now direct on dl_company_table (employee_count,
+-- latest_revenue_inr, latest_pat_inr, total_funding_inr, last_funding_*)
+-- and could replace separate-table joins below — left as-is until needed.
 WITH company AS (
     SELECT
         company_uuid AS company_id,
         name AS company_name,
         website,
-        REPLACE(REPLACE(website, 'https://', ''), 'http://', '') AS domain,
+        REPLACE(REPLACE(COALESCE(website,''), 'https://', ''), 'http://', '') AS domain,
         sector,
         sub_sector,
         business_model,
-        city,
-        state,
-        country,
-        founded_date AS founded_year,
-        tags,
-        linkedin,
-        slug
+        hq_city AS city,
+        hq_state AS state,
+        CAST(NULL AS STRING) AS country,
+        founded_year,
+        CAST(NULL AS STRING) AS tags,
+        CAST(NULL AS STRING) AS linkedin,
+        CAST(NULL AS STRING) AS slug
     FROM {{ source('bronze', 'dl_company_table') }}
     WHERE name IS NOT NULL
 ),
