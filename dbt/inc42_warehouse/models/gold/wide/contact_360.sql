@@ -927,9 +927,15 @@ SELECT
         )
     , 1) AS combined_engagement_score,
 
-    -- Tier: thresholds are evaluated AGAINST the R-multiplied scores so decay
-    -- naturally demotes stale contacts. "engaged" also requires recent activity
-    -- (anchor within last 18 months) so long-lapsed loyalists slide to passive.
+    -- Tier: ALL FOUR tiers are now score-based (R-multiplied paid + nonpaid scores).
+    -- Recency is baked into the scores → tier automatically demotes as contacts go stale.
+    -- Calibrated from the June 2026 score histogram across 489k contacts:
+    --   paid_engagement_score:    99.5% are 0; non-zero pool ~2,600 contacts.
+    --                             5+ = meaningful paid activity post-decay. 50+ = hot.
+    --   nonpaid_engagement_score: 81% are 0; meaningful content activity starts ~20.
+    --                             100+ = hot.
+    -- Removes the previous activity-based gates for engaged/passive — they ignored
+    -- recency and let stale "1 open from 3yr ago" contacts sit in passive forever.
     CASE
         WHEN ((COALESCE(o.total_membership_orders, 0) * 50.0
                + COALESCE(es.total_paid_event_tickets, 0) * 30.0
@@ -952,28 +958,51 @@ SELECT
                   1.0 - DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 24.0))
              ) >= 100
         THEN 'hot'
-        WHEN (COALESCE(o.total_orders, 0) > 0
-              OR COALESCE(es.total_paid_event_tickets, 0) > 0
-              OR (CASE WHEN c.daily_newsletter='subscribed' THEN 1 ELSE 0 END
-                  + CASE WHEN c.weekly_newsletter='subscribed' THEN 1 ELSE 0 END
-                  + CASE WHEN c.indepth_newsletter='subscribed' THEN 1 ELSE 0 END
-                  + CASE WHEN c.moneyball_newsletter='subscribed' THEN 1 ELSE 0 END
-                  + CASE WHEN c.theoutline_newsletter='subscribed' THEN 1 ELSE 0 END
-                  + CASE WHEN c.markets_newsletter='subscribed' THEN 1 ELSE 0 END) >= 2
-              OR COALESCE(f.total_form_submissions, 0) >= 3
-              OR COALESCE(es.total_free_event_registrations, 0) >= 1)
-          AND (DATE_DIFF(CURRENT_DATE(), ra.paid_anchor,    MONTH) <= 18
-            OR DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) <= 18)
+
+        WHEN ((COALESCE(o.total_membership_orders, 0) * 50.0
+               + COALESCE(es.total_paid_event_tickets, 0) * 30.0
+                     + COALESCE(o.total_revenue, 0) * 0.001)
+              * LEAST(1.0, GREATEST(0.0,
+                  1.0 - DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 24.0))
+             ) >= 5
+          OR (((CASE WHEN c.daily_newsletter='subscribed' THEN 1 ELSE 0 END
+                + CASE WHEN c.weekly_newsletter='subscribed' THEN 1 ELSE 0 END
+                + CASE WHEN c.indepth_newsletter='subscribed' THEN 1 ELSE 0 END
+                + CASE WHEN c.moneyball_newsletter='subscribed' THEN 1 ELSE 0 END
+                + CASE WHEN c.theoutline_newsletter='subscribed' THEN 1 ELSE 0 END
+                + CASE WHEN c.markets_newsletter='subscribed' THEN 1 ELSE 0 END
+               ) * 10.0
+               + COALESCE(es.total_free_event_registrations, 0) * 8.0
+               + COALESCE(f.total_form_submissions, 0) * 3.0
+               + COALESCE(m.total_emails_opened, 0) * 0.5
+               + COALESCE(m.total_emails_clicked, 0) * 2.0)
+              * LEAST(1.0, GREATEST(0.0,
+                  1.0 - DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 24.0))
+             ) >= 20
         THEN 'engaged'
-        WHEN (CASE WHEN c.daily_newsletter='subscribed' THEN 1 ELSE 0 END
-              + CASE WHEN c.weekly_newsletter='subscribed' THEN 1 ELSE 0 END
-              + CASE WHEN c.indepth_newsletter='subscribed' THEN 1 ELSE 0 END
-              + CASE WHEN c.moneyball_newsletter='subscribed' THEN 1 ELSE 0 END
-              + CASE WHEN c.theoutline_newsletter='subscribed' THEN 1 ELSE 0 END
-              + CASE WHEN c.markets_newsletter='subscribed' THEN 1 ELSE 0 END) >= 1
-          OR COALESCE(f.total_form_submissions, 0) >= 1
-          OR COALESCE(m.total_emails_opened, 0) >= 1
+
+        WHEN ((COALESCE(o.total_membership_orders, 0) * 50.0
+               + COALESCE(es.total_paid_event_tickets, 0) * 30.0
+                     + COALESCE(o.total_revenue, 0) * 0.001)
+              * LEAST(1.0, GREATEST(0.0,
+                  1.0 - DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 24.0))
+             ) > 0
+          OR (((CASE WHEN c.daily_newsletter='subscribed' THEN 1 ELSE 0 END
+                + CASE WHEN c.weekly_newsletter='subscribed' THEN 1 ELSE 0 END
+                + CASE WHEN c.indepth_newsletter='subscribed' THEN 1 ELSE 0 END
+                + CASE WHEN c.moneyball_newsletter='subscribed' THEN 1 ELSE 0 END
+                + CASE WHEN c.theoutline_newsletter='subscribed' THEN 1 ELSE 0 END
+                + CASE WHEN c.markets_newsletter='subscribed' THEN 1 ELSE 0 END
+               ) * 10.0
+               + COALESCE(es.total_free_event_registrations, 0) * 8.0
+               + COALESCE(f.total_form_submissions, 0) * 3.0
+               + COALESCE(m.total_emails_opened, 0) * 0.5
+               + COALESCE(m.total_emails_clicked, 0) * 2.0)
+              * LEAST(1.0, GREATEST(0.0,
+                  1.0 - DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 24.0))
+             ) > 0
         THEN 'passive'
+
         ELSE 'dormant'
     END AS engagement_tier,
 
