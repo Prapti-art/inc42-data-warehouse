@@ -53,17 +53,15 @@ with DAG(
     #  PHASE 1: INGESTION (all run in parallel)
     # ════════════════════════════════════════════
 
-    ingest_bronze = BashOperator(
-        task_id="load_bronze_tables",
-        bash_command=f"python {PROJECT_DIR}/scripts/01_create_bronze_tables.py",
-    )
-
-    # When you add real ingestion scripts, replace above with:
-    # ingest_woo = BashOperator(
-    #     task_id="ingest_woocommerce",
-    #     bash_command=f"python {PROJECT_DIR}/ingestion/scripts/woocommerce_ingest.py",
-    # )
-    # ingest_hubspot = BashOperator(...)
+    # REMOVED: load_bronze_tables (scripts/01_create_bronze_tables.py)
+    # That script is a *dev seeder* that does CREATE OR REPLACE on bronze tables
+    # with 5 hardcoded sample rows (FreshKart, PayEase, etc.). When it ran daily
+    # in prod, it briefly destroyed bronze.dl_company_table / hubspot_contacts /
+    # woocommerce_orders / etc. — until the real ingestion tasks below overwrote
+    # them. For tables where no real ingestion uses the same name (e.g.
+    # bronze.gravity_forms — real ingestion writes bronze.gravity_forms_entries
+    # etc.), the dev data was sticking permanently. Removing this task from prod;
+    # the script stays in scripts/ for dev/sandbox use only.
     # Customer.io: load parquet files from GCS → BigQuery Bronze
     ingest_customerio = BashOperator(
         task_id="load_customerio_gcs_to_bq",
@@ -167,7 +165,7 @@ with DAG(
     # Phase 1: All ingestion runs in parallel
     # Phase 2: PySpark runs after ALL ingestion completes
     # Phase 1 → Phase 2 → Phase 3
-    [ingest_bronze, ingest_customerio, ingest_tally, ingest_inc42_db, ingest_gravity, ingest_woocommerce, ingest_datalabs, ingest_hubspot] >> spark_identity
+    [ingest_customerio, ingest_tally, ingest_inc42_db, ingest_gravity, ingest_woocommerce, ingest_datalabs, ingest_hubspot] >> spark_identity
     spark_identity >> dbt_run >> dbt_test
 
     # Future:
