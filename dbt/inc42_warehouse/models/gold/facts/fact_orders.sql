@@ -7,10 +7,23 @@
 --   2. WooCommerce events historical backfill (bronze.woo_events_historical)
 --      — D2C / GenAI / Fintech / Startup Leaders ticket sales, one-time CSV ingest
 
--- bronze.woocommerce_orders was upstream-flattened — billing_email / billing_*
--- / order_total / tax_total / discount_amount / payment_method are now direct
--- columns. order_meta_pivoted CTE removed (was meta-key pivoting; no longer
--- needed). order_currency and billing_gst aren't in the flat schema → NULL.
+WITH order_meta_pivoted AS (
+    SELECT
+        m.post_id AS order_id,
+        MAX(CASE WHEN m.meta_key = '_billing_email' THEN LOWER(TRIM(m.meta_value)) END) AS email,
+        MAX(CASE WHEN m.meta_key = '_order_total' THEN SAFE_CAST(m.meta_value AS NUMERIC) END) AS order_total,
+        MAX(CASE WHEN m.meta_key = '_order_tax' THEN SAFE_CAST(m.meta_value AS NUMERIC) END) AS tax_total,
+        MAX(CASE WHEN m.meta_key = '_cart_discount' THEN SAFE_CAST(m.meta_value AS NUMERIC) END) AS discount_amount,
+        MAX(CASE WHEN m.meta_key = '_payment_method_title' THEN m.meta_value END) AS payment_method,
+        MAX(CASE WHEN m.meta_key = '_order_currency' THEN m.meta_value END) AS currency,
+        MAX(CASE WHEN m.meta_key = '_billing_company' THEN m.meta_value END) AS billing_company,
+        MAX(CASE WHEN m.meta_key = '_billing_city' THEN m.meta_value END) AS billing_city,
+        MAX(CASE WHEN m.meta_key = '_billing_state' THEN m.meta_value END) AS billing_state,
+        MAX(CASE WHEN m.meta_key = '_billing_country' THEN m.meta_value END) AS billing_country,
+        MAX(CASE WHEN m.meta_key = '_billing_gst' THEN m.meta_value END) AS billing_gst
+    FROM {{ source('bronze', 'woocommerce_order_meta') }} m
+    GROUP BY m.post_id
+),
 
 order_items AS (
     SELECT
@@ -74,18 +87,17 @@ normalized_items AS (
 
 orders AS (
     SELECT
-        o.order_id,
-        o.order_date,
-        o.order_status,
-        LOWER(TRIM(o.billing_email)) AS email,
-        o.billing_company, o.billing_city, o.billing_state, o.billing_country,
-        CAST(NULL AS STRING) AS billing_gst,
-        COALESCE(o.order_total, 0) AS order_total,
-        COALESCE(o.tax_total, 0) AS tax_total,
-        COALESCE(o.discount_amount, 0) AS discount_amount,
-        o.payment_method,
-        CAST(NULL AS STRING) AS currency
+        o.ID AS order_id,
+        o.post_date AS order_date,
+        o.post_status AS order_status,
+        om.email,
+        om.billing_company, om.billing_city, om.billing_state, om.billing_country, om.billing_gst,
+        COALESCE(om.order_total, 0) AS order_total,
+        COALESCE(om.tax_total, 0) AS tax_total,
+        COALESCE(om.discount_amount, 0) AS discount_amount,
+        om.payment_method, om.currency
     FROM {{ source('bronze', 'woocommerce_orders') }} o
+    LEFT JOIN order_meta_pivoted om ON o.ID = om.order_id
 ),
 
 -- Live WooCommerce orders (memberships, addons, anything not in historical events backfill)
