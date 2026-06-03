@@ -35,6 +35,10 @@ TABLES = {
     "42_gf_entry": "bronze.gravity_forms_entries",
     "42_gf_entry_meta": "bronze.gravity_forms_entry_meta",
     "42_gf_form": "bronze.gravity_forms_forms",
+    # Form definitions (display_meta is JSON with the per-form field schema —
+    # field id, label, type — used by silver.gravity_form_field_map to
+    # eliminate the meta_key=10 collision between company_name and 'Lead Source').
+    "42_gf_form_meta": "bronze.gravity_forms_form_meta",
 }
 
 

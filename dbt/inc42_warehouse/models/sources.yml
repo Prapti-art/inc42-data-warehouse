@@ -13,6 +13,7 @@ sources:
       - name: gravity_forms_entries
       - name: gravity_forms_entry_meta
       - name: gravity_forms_forms
+      - name: gravity_forms_form_meta
 
       # WooCommerce (MySQL)
       - name: woocommerce_orders

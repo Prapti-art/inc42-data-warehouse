@@ -175,22 +175,39 @@ tally AS (
 ),
 
 -- ── Gravity Forms Form 88: seniority + industry + company (87K entries) ──
+-- ── Gravity Forms — universal per-form field-map driven extract ──
+-- Replaces the form-88-only naive `meta_key IN ('3','4','5','6','9')` extract.
+-- Joins each entry_meta row to silver.gravity_form_field_map on (form_id, field_id=meta_key)
+-- so we look up each value by its CANONICAL field, not its meta_key index. Eliminates the
+-- meta_key=10 collision where forms 1/44/54/73/75 had "Lead Source" but form 88 had company.
+-- Lead-source values are never mapped to company_name now.
 gravity_form88 AS (
-    SELECT email, company_name, seniority, industry, phone
+    SELECT email, company_name, designation, seniority, industry, phone,
+           first_name, last_name, full_name, linkedin_url, city, state, country
     FROM (
         SELECT
-            LOWER(TRIM(MAX(CASE WHEN m.meta_key = '3' THEN m.meta_value END))) AS email,
-            MAX(CASE WHEN m.meta_key = '4' THEN m.meta_value END) AS company_name,
-            MAX(CASE WHEN m.meta_key = '5' THEN m.meta_value END) AS seniority,
-            MAX(CASE WHEN m.meta_key = '6' THEN m.meta_value END) AS phone,
-            MAX(CASE WHEN m.meta_key = '9' THEN m.meta_value END) AS industry,
+            LOWER(TRIM(MAX(CASE WHEN fm.canonical_field = 'email' THEN m.meta_value END))) AS email,
+            MAX(CASE WHEN fm.canonical_field = 'company_name'   THEN m.meta_value END) AS company_name,
+            MAX(CASE WHEN fm.canonical_field = 'designation'    THEN m.meta_value END) AS designation,
+            MAX(CASE WHEN fm.canonical_field = 'seniority'      THEN m.meta_value END) AS seniority,
+            MAX(CASE WHEN fm.canonical_field = 'industry'       THEN m.meta_value END) AS industry,
+            MAX(CASE WHEN fm.canonical_field = 'phone'          THEN m.meta_value END) AS phone,
+            MAX(CASE WHEN fm.canonical_field = 'first_name'     THEN m.meta_value END) AS first_name,
+            MAX(CASE WHEN fm.canonical_field = 'last_name'      THEN m.meta_value END) AS last_name,
+            MAX(CASE WHEN fm.canonical_field = 'full_name'      THEN m.meta_value END) AS full_name,
+            MAX(CASE WHEN fm.canonical_field = 'linkedin_url'   THEN m.meta_value END) AS linkedin_url,
+            MAX(CASE WHEN fm.canonical_field = 'city'           THEN m.meta_value END) AS city,
+            MAX(CASE WHEN fm.canonical_field = 'state'          THEN m.meta_value END) AS state,
+            MAX(CASE WHEN fm.canonical_field = 'country'        THEN m.meta_value END) AS country,
             ROW_NUMBER() OVER (
-                PARTITION BY LOWER(TRIM(MAX(CASE WHEN m.meta_key = '3' THEN m.meta_value END)))
+                PARTITION BY LOWER(TRIM(MAX(CASE WHEN fm.canonical_field = 'email' THEN m.meta_value END)))
                 ORDER BY e.date_created DESC
             ) AS rn
         FROM {{ source('bronze', 'gravity_forms_entries') }} e
         JOIN {{ source('bronze', 'gravity_forms_entry_meta') }} m ON e.id = m.entry_id
-        WHERE e.form_id = 88 AND e.status = 'active'
+        LEFT JOIN {{ ref('gravity_form_field_map') }} fm
+          ON fm.form_id = e.form_id AND fm.field_id = m.meta_key
+        WHERE e.status = 'active'
         GROUP BY e.id, e.date_created
     )
     WHERE rn = 1 AND email IS NOT NULL AND email LIKE '%@%'
