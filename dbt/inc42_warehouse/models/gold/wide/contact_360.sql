@@ -893,7 +893,6 @@ SELECT
          + COALESCE(f.total_form_submissions, 0) * 3.0
          + COALESCE(m.total_emails_opened, 0) * 0.5
          + COALESCE(m.total_emails_clicked, 0) * 2.0
-         + CASE WHEN me.moengage_reachability_push IN ('300','100') THEN 5.0 ELSE 0 END
         )
         * LEAST(1.0, GREATEST(0.0,
             1.0 - DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 24.0))
@@ -919,8 +918,7 @@ SELECT
            + COALESCE(f.total_form_submissions, 0) * 3.0
            + COALESCE(m.total_emails_opened, 0) * 0.5
            + COALESCE(m.total_emails_clicked, 0) * 2.0
-           + CASE WHEN me.moengage_reachability_push IN ('300','100') THEN 5.0 ELSE 0 END
-          )
+            )
           * LEAST(1.0, GREATEST(0.0,
               1.0 - DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 24.0))
         )
@@ -946,8 +944,7 @@ SELECT
                + COALESCE(es.total_free_event_registrations, 0) * 8.0
                + COALESCE(f.total_form_submissions, 0) * 3.0
                + COALESCE(m.total_emails_opened, 0) * 0.5
-               + COALESCE(m.total_emails_clicked, 0) * 2.0
-               + CASE WHEN me.moengage_reachability_push IN ('300','100') THEN 5.0 ELSE 0 END)
+               + COALESCE(m.total_emails_clicked, 0) * 2.0)
               * LEAST(1.0, GREATEST(0.0,
                   1.0 - DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 24.0))
              ) >= 100
@@ -973,7 +970,6 @@ SELECT
               + CASE WHEN c.markets_newsletter='subscribed' THEN 1 ELSE 0 END) >= 1
           OR COALESCE(f.total_form_submissions, 0) >= 1
           OR COALESCE(m.total_emails_opened, 0) >= 1
-          OR me.moengage_reachability_push IN ('300','100')
         THEN 'passive'
         ELSE 'dormant'
     END AS engagement_tier,
