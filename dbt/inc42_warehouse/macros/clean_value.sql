@@ -11,6 +11,7 @@
             'undefined','na','n/a','n.a','n.a.','null','none','none.','nan',
             'test','testing','tbd','xxx','xx','asdf','abc','-na-',
             'not applicable','not available','not specified','none of the above',
+            'others','other',
             '-','--','---','_','__','.','..','...','/','\\\\','?','??','*'
         ) THEN NULL
         {% if not allow_short %}
@@ -32,11 +33,25 @@
    ────────────────────────────────────────────────────────────────── #}
 {% macro scrub_company_name_junk(col) %}
     CASE
+        -- Form-attribution leakage + employment-status entries
         WHEN TRIM(LOWER({{ col }})) IN (
             'source','guest post','student','self','self employed','self-employed',
             'freelancer','freelance','unemployed','others','other','referral',
-            'na','n/a','none','no','yes','same','same as above'
+            'na','n/a','none','nil','no','yes','same','same as above',
+            -- Job titles people typed into the company field
+            'founder','co-founder','co founder','cofounder','ceo','cto','cmo','cfo',
+            'coo','cpo','cxo','consultant','director','manager','owner','proprietor',
+            -- Generic placeholders / abbreviations
+            'xyz','abcd','company','company name','my company','our company',
+            'startup','startups','firm','my firm','organization','organisation',
+            'individual','homemaker','housewife','retired'
         ) THEN NULL
+        -- URL leakage in company_name (people pasting their website URL)
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'https?://|\bwww\.') THEN NULL
+        -- Email-as-company (form bleed)
+        WHEN {{ col }} LIKE '%@%' THEN NULL
+        -- Sentence / paragraph blobs (real company names are essentially never > 120 chars)
+        WHEN LENGTH({{ col }}) > 120 THEN NULL
         ELSE {{ scrub_sentinel(col, allow_short=False) }}
     END
 {% endmacro %}
@@ -214,6 +229,9 @@
 {% macro normalize_designation(col) %}
     CASE
         WHEN {{ scrub_sentinel(col, allow_short=false) }} IS NULL THEN NULL
+        -- 'Student' / 'Self employed' aren't job titles — they belong in seniority.
+        -- seniority's designation-fallback still picks these up before we null them.
+        WHEN LOWER(TRIM({{ col }})) IN ('student','self employed','self-employed','self','unemployed','homemaker','housewife','retired') THEN NULL
         WHEN REGEXP_CONTAINS(LOWER(TRIM({{ col }})), r'^(co[ -]?founder)( & ?| and )(ceo)$') THEN 'Co-Founder & CEO'
         WHEN REGEXP_CONTAINS(LOWER(TRIM({{ col }})), r'^co[ -]?founder$') THEN 'Co-Founder'
         WHEN REGEXP_CONTAINS(LOWER(TRIM({{ col }})), r'^(founder)( & ?| and |/)(ceo)$') THEN 'Founder & CEO'
