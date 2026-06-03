@@ -23,6 +23,26 @@
 
 
 {# ──────────────────────────────────────────────────────────────────
+   scrub_company_name_junk: scrub_sentinel + null out company-name-specific
+   junk values that aren't real company names: form-attribution leakage
+   ('source', 'guest post'), employment-status entries ('student', 'self',
+   'self employed', 'freelancer', 'unemployed'), and generic non-answers
+   ('others', 'referral', 'none of the above'). NOT applied globally because
+   'student' is a legitimate seniority bucket.
+   ────────────────────────────────────────────────────────────────── #}
+{% macro scrub_company_name_junk(col) %}
+    CASE
+        WHEN TRIM(LOWER({{ col }})) IN (
+            'source','guest post','student','self','self employed','self-employed',
+            'freelancer','freelance','unemployed','others','other','referral',
+            'na','n/a','none','no','yes','same','same as above'
+        ) THEN NULL
+        ELSE {{ scrub_sentinel(col, allow_short=False) }}
+    END
+{% endmacro %}
+
+
+{# ──────────────────────────────────────────────────────────────────
    title_case_clean: trims, collapses whitespace, NULL-scrubs, title-cases.
    Used for names, cities, companies. Preserves all-caps acronyms in
    companies/titles is hard in pure SQL — this is good-enough title case.

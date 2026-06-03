@@ -81,8 +81,9 @@ web AS (
 SELECT
     c.company_id,
     -- company_name kept verbatim (not title-cased — preserves brand casing like
-    -- "boAt", "BYJU'S"); only sentinel junk scrubbed.
-    {{ scrub_sentinel('c.company_name', allow_short=False) }} AS company_name,
+    -- "boAt", "BYJU'S"); sentinel junk + employment-status / form-attribution
+    -- leakage scrubbed via scrub_company_name_junk.
+    {{ scrub_company_name_junk('c.company_name') }} AS company_name,
     c.website,
     c.domain,
     {{ scrub_sentinel('c.sector', allow_short=False) }} AS sector,

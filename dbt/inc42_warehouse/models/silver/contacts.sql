@@ -337,8 +337,9 @@ SELECT
         ELSE u.primary_phone
     END AS phone,
 
-    -- ═══ COMPANY ═══
-    {{ scrub_sentinel('COALESCE(NULLIF(i.company_name, ""), NULLIF(c.company_name, ""), NULLIF(w.company_name, ""), NULLIF(t.company_name, ""), NULLIF(gf.company_name, ""), NULLIF(h.company_name, ""), u.primary_company)', allow_short=False) }} AS company_name,
+    -- ═══ COMPANY ═══ (scrub_company_name_junk nulls form-attribution leakage
+    -- like 'source' from meta_key collisions + employment-status entries)
+    {{ scrub_company_name_junk('COALESCE(NULLIF(i.company_name, ""), NULLIF(c.company_name, ""), NULLIF(w.company_name, ""), NULLIF(t.company_name, ""), NULLIF(gf.company_name, ""), NULLIF(h.company_name, ""), u.primary_company)') }} AS company_name,
     {{ scrub_sentinel('c.company_website', allow_short=False) }} AS company_website,
 
     -- ═══ DESIGNATION ═══
