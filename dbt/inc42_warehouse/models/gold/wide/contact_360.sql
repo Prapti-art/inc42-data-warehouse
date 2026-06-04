@@ -936,6 +936,73 @@ SELECT
         )
     , 1) AS combined_engagement_score,
 
+    -- ═══════════════════════════════════════════════
+    -- NORMALIZED 0–100 SCORES (Option A: cap at hot threshold)
+    -- ═══════════════════════════════════════════════
+    -- Marketing-friendly bounded versions of the raw scores. Same R-multiplied
+    -- inputs as the raw scores above, just scaled + capped.
+    --   paid hot threshold is 50, so paid × 2 reaches 100 at hot.
+    --   nonpaid hot threshold is 100, so nonpaid × 1 reaches 100 at hot.
+    --   combined keeps the 2× paid weighting via weighted avg: (paid_pct × 2 + nonpaid_pct) / 3.
+    -- Trade-off: anyone above the hot threshold flattens to 100 (loses rank
+    -- order at the very top — analysts who need to distinguish top-tier
+    -- power users should use the raw _engagement_score columns above).
+
+    LEAST(100.0, ROUND(
+        ((COALESCE(o.total_membership_orders, 0) * 50.0
+          + COALESCE(es.total_paid_event_tickets, 0) * 30.0
+          + COALESCE(o.total_revenue, 0) * 0.001)
+         * LEAST(1.0, GREATEST(0.0,
+             1.0 - DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 24.0))
+        ) * 2.0
+    , 1)) AS paid_engagement_score_pct,
+
+    LEAST(100.0, ROUND(
+        ((CASE WHEN c.daily_newsletter='subscribed' THEN 1 ELSE 0 END
+          + CASE WHEN c.weekly_newsletter='subscribed' THEN 1 ELSE 0 END
+          + CASE WHEN c.indepth_newsletter='subscribed' THEN 1 ELSE 0 END
+          + CASE WHEN c.moneyball_newsletter='subscribed' THEN 1 ELSE 0 END
+          + CASE WHEN c.theoutline_newsletter='subscribed' THEN 1 ELSE 0 END
+          + CASE WHEN c.markets_newsletter='subscribed' THEN 1 ELSE 0 END
+         ) * 10.0
+         + COALESCE(es.total_free_event_registrations, 0) * 8.0
+         + COALESCE(f.total_form_submissions, 0) * 3.0
+         + COALESCE(m.total_emails_opened, 0) * 0.5
+         + COALESCE(m.total_emails_clicked, 0) * 2.0
+        )
+        * LEAST(1.0, GREATEST(0.0,
+            1.0 - DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 24.0))
+    , 1)) AS nonpaid_engagement_score_pct,
+
+    LEAST(100.0, ROUND(
+        (
+          LEAST(100.0,
+            ((COALESCE(o.total_membership_orders, 0) * 50.0
+              + COALESCE(es.total_paid_event_tickets, 0) * 30.0
+              + COALESCE(o.total_revenue, 0) * 0.001)
+             * LEAST(1.0, GREATEST(0.0,
+                 1.0 - DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 24.0))
+            ) * 2.0
+          ) * 2.0
+          + LEAST(100.0,
+            ((CASE WHEN c.daily_newsletter='subscribed' THEN 1 ELSE 0 END
+              + CASE WHEN c.weekly_newsletter='subscribed' THEN 1 ELSE 0 END
+              + CASE WHEN c.indepth_newsletter='subscribed' THEN 1 ELSE 0 END
+              + CASE WHEN c.moneyball_newsletter='subscribed' THEN 1 ELSE 0 END
+              + CASE WHEN c.theoutline_newsletter='subscribed' THEN 1 ELSE 0 END
+              + CASE WHEN c.markets_newsletter='subscribed' THEN 1 ELSE 0 END
+             ) * 10.0
+             + COALESCE(es.total_free_event_registrations, 0) * 8.0
+             + COALESCE(f.total_form_submissions, 0) * 3.0
+             + COALESCE(m.total_emails_opened, 0) * 0.5
+             + COALESCE(m.total_emails_clicked, 0) * 2.0
+            )
+            * LEAST(1.0, GREATEST(0.0,
+                1.0 - DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 24.0))
+          )
+        ) / 3.0
+    , 1)) AS combined_engagement_score_pct,
+
     -- Tier: ALL FOUR tiers are now score-based (R-multiplied paid + nonpaid scores).
     -- Recency is baked into the scores → tier automatically demotes as contacts go stale.
     -- Calibrated from the June 2026 score histogram across 489k contacts:
