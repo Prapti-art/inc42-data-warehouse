@@ -233,7 +233,14 @@ orders AS (
     -- via the events_summary CTE below, so we don't double-count.
     SELECT
         contact_key,
-        COUNT(*) AS total_orders,
+        -- Order counts filtered to is_completed = 1 (real transactions only).
+        -- Previously these counted abandoned / failed / cancelled rows too,
+        -- inflating paid_engagement_score for serial cart-abandoners (e.g.
+        -- niranjan.gidwani had 16 membership rows but only 5 actual payments).
+        -- Abandoned-cart count exposed separately as total_abandoned_orders.
+        COUNTIF(is_completed = 1) AS total_orders,
+        COUNT(*) AS total_attempted_orders,
+        COUNTIF(is_completed = 0 AND is_refunded = 0) AS total_abandoned_orders,
         SUM(CASE WHEN is_completed = 1 THEN net_revenue ELSE 0 END) AS total_revenue,
         SUM(CASE WHEN is_refunded = 1 THEN net_revenue ELSE 0 END) AS total_refunds,
         SUM(CASE WHEN is_completed = 1 THEN net_revenue ELSE 0 END)
@@ -241,8 +248,8 @@ orders AS (
         SUM(is_refunded) AS total_refunded_orders,
         SUM(is_cancelled) AS total_cancelled_orders,
         MAX(order_date_key) AS last_order_date_key,
-        COUNTIF(product_type = 'membership') AS total_membership_orders,
-        COUNTIF(product_type = 'addon') AS total_addon_orders,
+        COUNTIF(product_type = 'membership' AND is_completed = 1) AS total_membership_orders,
+        COUNTIF(product_type = 'addon'      AND is_completed = 1) AS total_addon_orders,
         SUM(CASE WHEN product_type = 'membership' AND is_completed = 1 THEN net_revenue ELSE 0 END) AS total_membership_revenue,
         MAX(CASE WHEN is_completed = 1 THEN order_date_key END) AS last_completed_order_date_key
     FROM {{ ref('fact_orders') }}
@@ -789,6 +796,8 @@ SELECT
 
     -- ═══ ORDERS ═══
     COALESCE(o.total_orders, 0) AS total_orders,
+    COALESCE(o.total_attempted_orders, 0) AS total_attempted_orders,
+    COALESCE(o.total_abandoned_orders, 0) AS total_abandoned_orders,
     COALESCE(o.total_revenue, 0) AS total_revenue,
     COALESCE(o.total_refunds, 0) AS total_refunds,
     COALESCE(o.net_ltv, 0) AS net_ltv,
