@@ -953,7 +953,7 @@ SELECT
          * LEAST(1.0, GREATEST(0.0,
              EXP(-DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 12.0)))
         ) * 2.0
-    , 1)) AS paid_engagement_score_pct,
+    , 1)) AS paid_engagement_normalized,
 
     LEAST(100.0, ROUND(
         ((CASE WHEN c.daily_newsletter='subscribed' THEN 1 ELSE 0 END
@@ -970,7 +970,7 @@ SELECT
         )
         * LEAST(1.0, GREATEST(0.0,
             EXP(-DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 12.0)))
-    , 1)) AS nonpaid_engagement_score_pct,
+    , 1)) AS nonpaid_engagement_normalized,
 
     LEAST(100.0, ROUND(
         (
@@ -999,7 +999,7 @@ SELECT
                 EXP(-DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 12.0)))
           )
         ) / 3.0
-    , 1)) AS combined_engagement_score_pct,
+    , 1)) AS combined_engagement_normalized,
 
     -- Tier: ALL FOUR tiers are now score-based (R-multiplied paid + nonpaid scores).
     -- Recency is baked into the scores → tier automatically demotes as contacts go stale.
