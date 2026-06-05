@@ -889,7 +889,7 @@ SELECT
          + COALESCE(es.total_paid_event_tickets, 0) * 30.0
                  )
         * LEAST(1.0, GREATEST(0.0,
-            1.0 - DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 24.0))
+            EXP(-DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 12.0)))
     , 1) AS paid_engagement_score,
 
     ROUND(
@@ -906,7 +906,7 @@ SELECT
          + COALESCE(m.total_emails_clicked, 0) * 2.0
         )
         * LEAST(1.0, GREATEST(0.0,
-            1.0 - DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 24.0))
+            EXP(-DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 12.0)))
     , 1) AS nonpaid_engagement_score,
 
     ROUND(
@@ -914,7 +914,7 @@ SELECT
           + COALESCE(es.total_paid_event_tickets, 0) * 30.0
                     )
          * LEAST(1.0, GREATEST(0.0,
-             1.0 - DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 24.0))
+             EXP(-DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 12.0)))
         ) * 2.0
         + (
           ((CASE WHEN c.daily_newsletter = 'subscribed' THEN 1 ELSE 0 END
@@ -930,7 +930,7 @@ SELECT
            + COALESCE(m.total_emails_clicked, 0) * 2.0
             )
           * LEAST(1.0, GREATEST(0.0,
-              1.0 - DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 24.0))
+              EXP(-DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 12.0)))
         )
     , 1) AS combined_engagement_score,
 
@@ -951,7 +951,7 @@ SELECT
           + COALESCE(es.total_paid_event_tickets, 0) * 30.0
           )
          * LEAST(1.0, GREATEST(0.0,
-             1.0 - DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 24.0))
+             EXP(-DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 12.0)))
         ) * 2.0
     , 1)) AS paid_engagement_score_pct,
 
@@ -969,7 +969,7 @@ SELECT
          + COALESCE(m.total_emails_clicked, 0) * 2.0
         )
         * LEAST(1.0, GREATEST(0.0,
-            1.0 - DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 24.0))
+            EXP(-DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 12.0)))
     , 1)) AS nonpaid_engagement_score_pct,
 
     LEAST(100.0, ROUND(
@@ -979,7 +979,7 @@ SELECT
               + COALESCE(es.total_paid_event_tickets, 0) * 30.0
               )
              * LEAST(1.0, GREATEST(0.0,
-                 1.0 - DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 24.0))
+                 EXP(-DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 12.0)))
             ) * 2.0
           ) * 2.0
           + LEAST(100.0,
@@ -996,7 +996,7 @@ SELECT
              + COALESCE(m.total_emails_clicked, 0) * 2.0
             )
             * LEAST(1.0, GREATEST(0.0,
-                1.0 - DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 24.0))
+                EXP(-DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 12.0)))
           )
         ) / 3.0
     , 1)) AS combined_engagement_score_pct,
@@ -1015,7 +1015,7 @@ SELECT
                + COALESCE(es.total_paid_event_tickets, 0) * 30.0
                      )
               * LEAST(1.0, GREATEST(0.0,
-                  1.0 - DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 24.0))
+                  EXP(-DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 12.0)))
              ) >= 50
           OR (((CASE WHEN c.daily_newsletter='subscribed' THEN 1 ELSE 0 END
                 + CASE WHEN c.weekly_newsletter='subscribed' THEN 1 ELSE 0 END
@@ -1029,7 +1029,7 @@ SELECT
                + COALESCE(m.total_emails_opened, 0) * 0.5
                + COALESCE(m.total_emails_clicked, 0) * 2.0)
               * LEAST(1.0, GREATEST(0.0,
-                  1.0 - DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 24.0))
+                  EXP(-DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 12.0)))
              ) >= 100
         THEN 'hot'
 
@@ -1037,7 +1037,7 @@ SELECT
                + COALESCE(es.total_paid_event_tickets, 0) * 30.0
                      )
               * LEAST(1.0, GREATEST(0.0,
-                  1.0 - DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 24.0))
+                  EXP(-DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 12.0)))
              ) >= 5
           OR (((CASE WHEN c.daily_newsletter='subscribed' THEN 1 ELSE 0 END
                 + CASE WHEN c.weekly_newsletter='subscribed' THEN 1 ELSE 0 END
@@ -1051,7 +1051,7 @@ SELECT
                + COALESCE(m.total_emails_opened, 0) * 0.5
                + COALESCE(m.total_emails_clicked, 0) * 2.0)
               * LEAST(1.0, GREATEST(0.0,
-                  1.0 - DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 24.0))
+                  EXP(-DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 12.0)))
              ) >= 20
         THEN 'engaged'
 
@@ -1059,7 +1059,7 @@ SELECT
                + COALESCE(es.total_paid_event_tickets, 0) * 30.0
                      )
               * LEAST(1.0, GREATEST(0.0,
-                  1.0 - DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 24.0))
+                  EXP(-DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 12.0)))
              ) > 0
           OR (((CASE WHEN c.daily_newsletter='subscribed' THEN 1 ELSE 0 END
                 + CASE WHEN c.weekly_newsletter='subscribed' THEN 1 ELSE 0 END
@@ -1073,7 +1073,7 @@ SELECT
                + COALESCE(m.total_emails_opened, 0) * 0.5
                + COALESCE(m.total_emails_clicked, 0) * 2.0)
               * LEAST(1.0, GREATEST(0.0,
-                  1.0 - DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 24.0))
+                  EXP(-DATE_DIFF(CURRENT_DATE(), ra.nonpaid_anchor, MONTH) / 12.0)))
              ) > 0
         THEN 'passive'
 
