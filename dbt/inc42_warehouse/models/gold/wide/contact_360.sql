@@ -887,8 +887,7 @@ SELECT
     ROUND(
         (COALESCE(o.total_membership_orders, 0) * 50.0
          + COALESCE(es.total_paid_event_tickets, 0) * 30.0
-         + COALESCE(o.total_revenue, 0) * 0.001
-        )
+                 )
         * LEAST(1.0, GREATEST(0.0,
             1.0 - DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 24.0))
     , 1) AS paid_engagement_score,
@@ -913,8 +912,7 @@ SELECT
     ROUND(
         ((COALESCE(o.total_membership_orders, 0) * 50.0
           + COALESCE(es.total_paid_event_tickets, 0) * 30.0
-           + COALESCE(o.total_revenue, 0) * 0.001
-         )
+                    )
          * LEAST(1.0, GREATEST(0.0,
              1.0 - DATE_DIFF(CURRENT_DATE(), ra.paid_anchor, MONTH) / 24.0))
         ) * 2.0
