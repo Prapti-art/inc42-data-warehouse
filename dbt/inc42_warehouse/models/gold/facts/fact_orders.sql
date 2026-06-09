@@ -167,7 +167,7 @@ historical_events AS (
     LEFT JOIN {{ ref('dim_contact') }} dc ON LOWER(TRIM(h.billing_email)) = LOWER(TRIM(dc.email))
     WHERE LOWER(COALESCE(h.billing_email, '')) NOT LIKE '%@inc42.com'
       AND h.order_id IS NOT NULL
-)
+),
 
 -- D2CX WooCommerce orders (CSV-loaded from d2cx.co's 3 separate WC stores).
 -- These cover D2CX Foundations, D2CX AI, and D2CX Applications cohorts —
