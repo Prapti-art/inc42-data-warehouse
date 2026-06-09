@@ -218,12 +218,13 @@ def main():
     print(f"  account mode: {'LIVE' if KEY_ID.startswith('rzp_live_') else 'TEST'}")
     ensure_table()
 
+    EPOCH_FLOOR = 946684800  # 2000-01-01 — Razorpay's minimum allowed `from`
     hwm = get_high_watermark()
     if hwm == 0:
-        from_ts = 0  # full history
-        print(f"  high-watermark: 0 (first run — pulling full history)")
+        from_ts = EPOCH_FLOOR
+        print(f"  high-watermark: 0 (first run — pulling full history from 2000-01-01)")
     else:
-        from_ts = hwm  # incremental — Razorpay's `from` is inclusive, MERGE handles dup
+        from_ts = max(hwm, EPOCH_FLOOR)
         print(f"  high-watermark: {hwm} ({datetime.fromtimestamp(hwm, tz=timezone.utc).isoformat()})")
 
     rows = [transform(p) for p in fetch_payments(from_ts)]
