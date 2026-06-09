@@ -7,6 +7,9 @@
     CASE
         WHEN {{ col }} IS NULL OR TRIM({{ col }}) = '' THEN NULL
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'd2cx[ _-]?converge') THEN 'D2CX Converge'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'd2cx[ _-]?ai') THEN 'D2CX AI'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'd2cx[ _-]?foundations') THEN 'D2CX Foundations'
+        WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'd2cx[ _-]?application|^application price$') THEN 'D2CX Applications'
         WHEN REGEXP_CONTAINS(LOWER({{ col }}), r'd2c[ _-]?(summit|day|retreat|&[ _-]?retail|whatsapp videos)|d2c summit|the d2c') THEN 'D2C Summit'
         -- GenAI Summit franchise (rebranded to "Inc42 AI Summit" in 2026, but
         -- continuation of the same event series, so we keep one franchise).

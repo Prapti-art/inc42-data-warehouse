@@ -50,6 +50,9 @@ sources:
       # WooCommerce events full backfill (xlsx, May 2026 — supersedes woo_events_historical)
       - name: woo_events_full
 
+      # D2CX cohort orders (CSV exports from d2cx.co WC stores: Foundations, AI, Applications)
+      - name: d2cx_wc_orders
+
       # Datalabs (PostgreSQL)
       - name: dl_company_table
       - name: dl_funding_table

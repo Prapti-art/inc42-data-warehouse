@@ -169,6 +169,45 @@ historical_events AS (
       AND h.order_id IS NOT NULL
 )
 
+-- D2CX WooCommerce orders (CSV-loaded from d2cx.co's 3 separate WC stores).
+-- These cover D2CX Foundations, D2CX AI, and D2CX Applications cohorts —
+-- distinct franchises that don't exist in live_orders (inc42prod MySQL) or
+-- historical_events (xlsx backfill). Dedup at silver via the standard
+-- (contact, franchise, edition, role) ROW_NUMBER partition.
+d2cx_wc_events AS (
+    SELECT
+        CAST(NULL AS INT64) AS order_item_id,
+        SAFE_CAST(d.order_id AS INT64) AS order_id,
+        dc.contact_key,
+        CAST(FORMAT_DATE('%Y%m%d', DATE(d.order_date)) AS INT64) AS order_date_key,
+        d.order_status,
+        d.product_name AS raw_product_name,
+        d.product_name,
+        'event' AS product_type,
+        CAST(NULL AS STRING) AS membership_duration,
+        CAST(NULL AS STRING) AS pass_type,
+        SAFE_CAST(d.order_total_inr AS NUMERIC) AS order_total,
+        CAST(NULL AS NUMERIC) AS tax_total,
+        CAST(0 AS NUMERIC) AS discount_amount,
+        GREATEST(SAFE_CAST(d.item_total_inr AS NUMERIC), 0) AS net_revenue,
+        CAST(0 AS NUMERIC) AS refund_total,
+        CAST(NULL AS STRING) AS payment_method,
+        'INR' AS currency,
+        d.billing_company, d.billing_city, d.billing_state, d.billing_country,
+        CAST(NULL AS STRING) AS billing_gst,
+        CASE WHEN d.order_status = 'wc-completed' THEN 1 ELSE 0 END AS is_completed,
+        CASE WHEN d.order_status = 'wc-refunded' THEN 1 ELSE 0 END AS is_refunded,
+        CASE WHEN d.order_status = 'wc-cancelled' THEN 1 ELSE 0 END AS is_cancelled,
+        CASE WHEN d.order_status IN ('wc-processing', 'wc-completed') THEN 1 ELSE 0 END AS is_successful
+    FROM {{ source('bronze', 'd2cx_wc_orders') }} d
+    LEFT JOIN {{ ref('dim_contact') }} dc ON LOWER(TRIM(d.billing_email)) = LOWER(TRIM(dc.email))
+    WHERE d.order_id IS NOT NULL
+      AND d.product_name IS NOT NULL
+      AND LOWER(COALESCE(d.billing_email, '')) NOT LIKE '%@inc42.com'
+)
+
 SELECT * FROM live_orders
 UNION ALL
 SELECT * FROM historical_events
+UNION ALL
+SELECT * FROM d2cx_wc_events
