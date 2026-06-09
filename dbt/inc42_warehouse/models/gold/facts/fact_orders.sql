@@ -195,7 +195,10 @@ d2cx_wc_events AS (
         'INR' AS currency,
         d.billing_company, d.billing_city, d.billing_state, d.billing_country,
         CAST(NULL AS STRING) AS billing_gst,
-        CASE WHEN d.order_status = 'wc-completed' THEN 1 ELSE 0 END AS is_completed,
+        -- D2CX stores sell digital goods only (event tickets, application slots).
+        -- WC leaves paid digital orders at 'wc-processing' since there's no
+        -- physical fulfillment step; treat both as completed for revenue/paid.
+        CASE WHEN d.order_status IN ('wc-processing', 'wc-completed') THEN 1 ELSE 0 END AS is_completed,
         CASE WHEN d.order_status = 'wc-refunded' THEN 1 ELSE 0 END AS is_refunded,
         CASE WHEN d.order_status = 'wc-cancelled' THEN 1 ELSE 0 END AS is_cancelled,
         CASE WHEN d.order_status IN ('wc-processing', 'wc-completed') THEN 1 ELSE 0 END AS is_successful
