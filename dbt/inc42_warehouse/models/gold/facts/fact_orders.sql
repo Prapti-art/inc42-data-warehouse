@@ -182,7 +182,18 @@ d2cx_wc_events AS (
         CAST(FORMAT_DATE('%Y%m%d', DATE(d.order_date)) AS INT64) AS order_date_key,
         d.order_status,
         d.product_name AS raw_product_name,
-        d.product_name,
+        -- Disambiguate generic SKUs ("Free Application", "Application price") by
+        -- prefixing with the source_store's franchise. Without this, "Free
+        -- Application" rows from d2cx_applications and d2cx_foundations both
+        -- collapse to "Other Events" downstream because the franchise macro
+        -- can't infer franchise from a store-agnostic name.
+        CASE
+            WHEN LOWER(d.product_name) LIKE 'd2cx%' THEN d.product_name
+            WHEN d.source_store = 'd2cx_applications' THEN CONCAT('D2CX Application: ', d.product_name)
+            WHEN d.source_store = 'd2cx_foundations'  THEN CONCAT('D2CX Foundations: ', d.product_name)
+            WHEN d.source_store = 'd2cx_ai'           THEN CONCAT('D2CX AI: ', d.product_name)
+            ELSE d.product_name
+        END AS product_name,
         'event' AS product_type,
         CAST(NULL AS STRING) AS membership_duration,
         CAST(NULL AS STRING) AS pass_type,
