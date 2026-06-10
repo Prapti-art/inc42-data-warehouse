@@ -137,7 +137,18 @@ live_orders AS (
 historical_events AS (
     SELECT
         CAST(NULL AS INT64) AS order_item_id,
-        SAFE_CAST(h.order_id AS INT64) AS order_id,
+        -- xlsx backfill has many non-numeric order_ids (alphanumeric "GS-2024-001"
+        -- shape) where SAFE_CAST returns NULL and trips the not_null test.
+        -- Fall back to a stable hash of (order_id|product|date) so re-runs are
+        -- deterministic. ABS keeps it positive; INT64 fits FARM_FINGERPRINT output.
+        COALESCE(
+            SAFE_CAST(h.order_id AS INT64),
+            ABS(FARM_FINGERPRINT(CONCAT(
+                COALESCE(h.order_id, ''), '|',
+                COALESCE(h.product_name, ''), '|',
+                COALESCE(h.order_date, '')
+            )))
+        ) AS order_id,
         dc.contact_key,
         CAST(FORMAT_DATE('%Y%m%d', DATE(SAFE.PARSE_DATETIME('%Y-%m-%d %H:%M:%S', h.order_date))) AS INT64) AS order_date_key,
         h.order_status,
