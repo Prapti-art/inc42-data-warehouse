@@ -1,86 +1,127 @@
 """
-Customer.io GCS → BigQuery Bronze Loader
+Customer.io GCS → BigQuery Bronze Loader (multi-workspace).
 
-Customer.io drops parquet files into GCS every 10 minutes.
-This script loads them into BigQuery Bronze tables.
+Customer.io drops parquet files into GCS every 10 minutes (one path per
+workspace). This loader iterates over every workspace defined in WORKSPACES
+and loads each into a namespaced set of bronze tables.
 
-Run daily via Airflow. Uses WRITE_TRUNCATE (full refresh) since
-Customer.io sends cumulative snapshots, not incremental deltas.
+Run daily via Airflow. WRITE_TRUNCATE per table since Customer.io sends
+cumulative snapshots, not incremental deltas.
+
+Add a new workspace: append to WORKSPACES list, redeploy. No code changes.
 
 Usage:
     export GOOGLE_APPLICATION_CREDENTIALS="/path/to/bq-service-account.json"
-    python ingestion/scripts/customerio_gcs_to_bq.py
+    python3 ingestion/scripts/customerio_gcs_to_bq.py [--workspace main]
 """
-
+import argparse
 import os
+import sys
+
 from google.cloud import bigquery
 
-os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS",
-    "/Users/cepl/Documents/inc42-data-warehouse/.secrets/bq-service-account.json")
-
+os.environ.setdefault(
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "/Users/cepl/Documents/inc42-data-warehouse/.secrets/bq-service-account.json",
+)
 BQ_PROJECT = "bigquery-296406"
-GCS_BUCKET = "gs://inc42-data-warehouse-raw/customerio"
 
-bq = bigquery.Client(project=BQ_PROJECT)
+# Add a workspace by appending here. `bronze_prefix` namespaces the tables so
+# multiple workspaces never collide.
+WORKSPACES = [
+    {
+        "name": "main",
+        "workspace_id": 208301,
+        "gcs_path": "gs://inc42-data-warehouse-raw/customerio",
+        "bronze_prefix": "cio_",
+    },
+    {
+        "name": "datalabs",
+        "workspace_id": 208719,
+        "gcs_path": "gs://inc42-data-warehouse-raw/datalabs_customerio",
+        "bronze_prefix": "cio_datalabs_",
+    },
+]
 
-# Map: file prefix → BigQuery table
-TABLES = {
-    "attributes":        "bronze.cio_attributes",
-    "people":            "bronze.cio_people",
-    "metrics":           "bronze.cio_metrics",
-    "events":            "bronze.cio_events",
-    "deliveries":        "bronze.cio_deliveries",
-    "delivery_contents": "bronze.cio_delivery_contents",
-    "campaigns":         "bronze.cio_campaigns",
-    "campaign_actions":  "bronze.cio_campaign_actions",
-    "broadcasts":        "bronze.cio_broadcasts",
-}
+# All parquet types CIO can export. Workspaces with no data for a given type
+# are skipped silently — the loader simply finds no matching files.
+FILE_TYPES = [
+    "attributes",
+    "people",
+    "metrics",
+    "events",
+    "deliveries",
+    "delivery_contents",
+    "campaigns",
+    "campaign_actions",
+    "broadcasts",
+    # CIO Copilot / newer-feature outputs (present in Datalabs workspace)
+    "outputs",
+    "subjects",
+]
 
 
-def load_table(prefix, table_name):
-    """Load all parquet files matching prefix into BigQuery table."""
-    gcs_uri = f"{GCS_BUCKET}/{prefix}_v5_*"
-    full_table = f"{BQ_PROJECT}:{table_name}"
-
-    print(f"  Loading {gcs_uri} → {table_name}...", end=" ")
-
+def load_one(bq, gcs_path, prefix, table):
+    """Load all parquet files matching <gcs_path>/<prefix>_v5_* into <table>."""
+    uri = f"{gcs_path}/{prefix}_v5_*"
+    full_table = f"{BQ_PROJECT}.{table}"
+    print(f"    {prefix:18s} → {table:35s}", end=" ")
     job_config = bigquery.LoadJobConfig(
         source_format=bigquery.SourceFormat.PARQUET,
         write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
-        # WRITE_TRUNCATE = replace all data each run
-        # Safe because Customer.io sends full snapshots, not deltas
+        autodetect=True,
     )
-
     try:
-        job = bq.load_table_from_uri(
-            gcs_uri,
-            f"{BQ_PROJECT}.{table_name}",
-            job_config=job_config,
-        )
-        job.result()  # Wait for completion
-        table = bq.get_table(f"{BQ_PROJECT}.{table_name}")
-        print(f"✓ {table.num_rows:,} rows")
-        return table.num_rows
+        job = bq.load_table_from_uri(uri, full_table, job_config=job_config)
+        job.result()
+        n = bq.get_table(full_table).num_rows
+        print(f"✓ {n:,} rows")
+        return n
     except Exception as e:
-        print(f"✗ ERROR: {e}")
+        msg = str(e)
+        # Empty match (no files) — silently skip; not an error for workspaces
+        # that don't export that file type.
+        if "Not found" in msg or "matched no files" in msg or "No matching files" in msg.lower():
+            print("· (no files)")
+            return 0
+        print(f"✗ ERROR: {msg[:200]}")
         return 0
 
 
+def load_workspace(bq, ws):
+    print(f"\n  Workspace: {ws['name']} (id={ws['workspace_id']})")
+    print(f"  Source:    {ws['gcs_path']}")
+    total = 0
+    for ft in FILE_TYPES:
+        bronze_table = f"bronze.{ws['bronze_prefix']}{ft}"
+        total += load_one(bq, ws["gcs_path"], ft, bronze_table)
+    return total
+
+
 def main():
-    print("=" * 60)
-    print("CUSTOMER.IO GCS → BIGQUERY BRONZE LOADER")
-    print("=" * 60)
-    print(f"Source: {GCS_BUCKET}")
-    print()
+    ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--workspace",
+        choices=[w["name"] for w in WORKSPACES] + ["all"],
+        default="all",
+        help="Workspace to load (default: all)",
+    )
+    args = ap.parse_args()
 
-    total_rows = 0
-    for prefix, table_name in TABLES.items():
-        rows = load_table(prefix, table_name)
-        total_rows += rows
-
-    print()
     print("=" * 60)
-    print(f"✅ COMPLETE — {total_rows:,} total rows loaded across {len(TABLES)} tables")
+    print("CUSTOMER.IO → BIGQUERY BRONZE LOADER")
+    print("=" * 60)
+
+    bq = bigquery.Client(project=BQ_PROJECT)
+    targets = WORKSPACES if args.workspace == "all" else [
+        w for w in WORKSPACES if w["name"] == args.workspace
+    ]
+    grand_total = 0
+    for ws in targets:
+        grand_total += load_workspace(bq, ws)
+
+    print(f"\n{'=' * 60}")
+    print(f"✅ COMPLETE — {grand_total:,} rows across {len(targets)} workspace(s)")
     print("=" * 60)
 
 

@@ -15,15 +15,20 @@ Attribute pushed: engagement_tier_test (intentionally test suffix to avoid
 collision with any future live engagement_tier attribute).
 """
 import argparse
-import json
 import os
 import sys
 
 import requests
 from google.cloud import bigquery
 
-os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", "/secrets/bq-service-account.json")
+_LOCAL_KEY = "/Users/inc42/OldMacBackup/Documents/inc42-data-warehouse/.secrets/bq-service-account.json"
+_PROD_KEY = "/secrets/bq-service-account.json"
+os.environ.setdefault(
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    _LOCAL_KEY if os.path.exists(_LOCAL_KEY) else _PROD_KEY,
+)
 BQ_PROJECT = "bigquery-296406"
+COHORT_SIZE = 20  # contacts per tier (sort of — see cohort query)
 
 SITE_ID = os.environ.get("CIO_SITE_ID")
 API_KEY = os.environ.get("CIO_API_KEY")
@@ -33,24 +38,24 @@ if not SITE_ID or not API_KEY:
 TRACK_API = "https://track.customer.io/api/v1"
 ATTRIBUTE_NAME = "engagement_tier_test"
 
-# Test cohort — your own email + 1 contact per tier (deterministic by alphabetical email).
+# Test cohort — 5 clean, real-looking contacts per tier (20 total).
+# Filters out template-placeholder emails (%spinfile%...) and ones starting
+# with non-alphanumeric chars; deterministic by alphabetical email so the
+# same set is picked on re-runs.
 COHORT_QUERY = f"""
 WITH ranked AS (
   SELECT
-    LOWER(email) AS email,
-    engagement_tier,
-    full_name,
+    LOWER(email) AS email, engagement_tier, full_name,
     ROW_NUMBER() OVER (PARTITION BY engagement_tier ORDER BY email) AS rn
   FROM `{BQ_PROJECT}.silver_gold.contact_360`
   WHERE email IS NOT NULL AND email != ''
     AND engagement_tier IN ('hot','engaged','passive','dormant')
+    AND REGEXP_CONTAINS(LOWER(email), r'^[a-z0-9][a-z0-9._-]*@[a-z0-9][a-z0-9.-]*\\.[a-z]{{2,}}$')
+    AND NOT REGEXP_CONTAINS(email, r'%')
+    AND email NOT LIKE 'test%'
 )
-SELECT email, engagement_tier, full_name FROM ranked WHERE rn = 1
-UNION DISTINCT
-SELECT LOWER(email), engagement_tier, full_name
-FROM `{BQ_PROJECT}.silver_gold.contact_360`
-WHERE LOWER(email) = 'datalabs@inc42.com'
-ORDER BY engagement_tier
+SELECT email, engagement_tier, full_name FROM ranked WHERE rn <= 5
+ORDER BY engagement_tier, email
 """
 
 
